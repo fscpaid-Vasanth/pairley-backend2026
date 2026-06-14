@@ -1,8 +1,25 @@
-import { Controller, Post, Body, Get, Put, Delete, UseGuards, Req, HttpCode, HttpStatus } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  Get,
+  Put,
+  Delete,
+  UseGuards,
+  Req,
+  HttpCode,
+  HttpStatus,
+} from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { IsNotEmpty, IsString, IsEmail, IsOptional, Length } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsString,
+  IsEmail,
+  IsOptional,
+  Length,
+} from 'class-validator';
 
 class SendOtpDto {
   @IsString()
@@ -112,7 +129,7 @@ class RegisterDto {
 }
 
 class LoginDto {
-  @IsEmail()
+  @IsString()
   @IsNotEmpty()
   email: string;
 
