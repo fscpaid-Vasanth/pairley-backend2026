@@ -337,7 +337,12 @@ export class AuthService implements OnModuleInit {
       : await this.prisma.customer.findUnique({
           where: { mobile: normalizedIdentifier },
         });
-    if (customer && customer.password_hash) {
+    if (customer && !customer.password_hash) {
+      throw new UnauthorizedException(
+        'This account uses OTP login. Tap Login with OTP.',
+      );
+    }
+    if (customer?.password_hash) {
       const match = await bcrypt.compare(password, customer.password_hash);
       if (!match) {
         throw new UnauthorizedException('Invalid customer credentials');
