@@ -61,21 +61,28 @@ export class AuthService implements OnModuleInit {
   }
 
   async verifyOtp(mobile: string, code: string) {
-    const record = await this.prisma.otpVerification.findFirst({
-      where: { mobile, code },
-      orderBy: { created_at: 'desc' },
-    });
+    let isVerified = false;
 
-    if (!record) {
+    if (this.otpService.useMock && (code === '1234' || code === '123456')) {
+      isVerified = true;
+    } else {
+      const record = await this.prisma.otpVerification.findFirst({
+        where: { mobile, code },
+        orderBy: { created_at: 'desc' },
+      });
+
+      if (record) {
+        if (new Date() > record.expires_at) {
+          throw new BadRequestException('OTP code has expired');
+        }
+        isVerified = true;
+        await this.prisma.otpVerification.deleteMany({ where: { mobile } });
+      }
+    }
+
+    if (!isVerified) {
       throw new BadRequestException('Invalid OTP code');
     }
-
-    if (new Date() > record.expires_at) {
-      throw new BadRequestException('OTP code has expired');
-    }
-
-    // OTP verified, clean up OTP database records for this mobile
-    await this.prisma.otpVerification.deleteMany({ where: { mobile } });
 
     // Check if customer or business owner exists with this mobile
     const customer = await this.prisma.customer.findUnique({
@@ -111,6 +118,7 @@ export class AuthService implements OnModuleInit {
 
   async register(data: any) {
     const { role, mobile, email, name, ...extra } = data;
+    const normalizedEmail = email?.trim().toLowerCase() || null;
 
     if (role === 'Customer') {
       const existingCustomer = await this.prisma.customer.findUnique({
@@ -126,7 +134,7 @@ export class AuthService implements OnModuleInit {
         data: {
           name,
           mobile,
-          email: email || null,
+          email: normalizedEmail,
           password_hash: extra.password
             ? await bcrypt.hash(extra.password, 10)
             : null,
@@ -170,7 +178,7 @@ export class AuthService implements OnModuleInit {
           business_type: extra.business_type || 'Retail',
           category: extra.category || 'General',
           mobile,
-          email: email || '',
+          email: normalizedEmail || '',
           password_hash: passwordHash,
           address: extra.address || '',
           city: extra.city || '',

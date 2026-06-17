@@ -4,7 +4,7 @@ import { ConfigService } from '@nestjs/config';
 @Injectable()
 export class OtpService {
   private readonly logger = new Logger(OtpService.name);
-  private readonly useMock: boolean;
+  public readonly useMock: boolean;
   private readonly apiKey: string;
   private readonly senderId: string;
   private readonly templateId: string;
