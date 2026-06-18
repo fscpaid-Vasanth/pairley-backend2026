@@ -164,6 +164,22 @@ class GoogleAuthDto {
   @IsString()
   @IsOptional()
   profile_photo?: string;
+
+  @IsString()
+  @IsOptional()
+  category?: string;
+
+  @IsString()
+  @IsOptional()
+  address?: string;
+
+  @IsString()
+  @IsOptional()
+  state?: string;
+
+  @IsString()
+  @IsOptional()
+  pincode?: string;
 }
 
 class LoginDto {
