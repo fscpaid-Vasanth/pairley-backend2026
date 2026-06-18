@@ -14,7 +14,9 @@ export class NotificationService {
     private configService: ConfigService,
     private prisma: PrismaService
   ) {
-    this.useMock = this.configService.get<boolean>('USE_MOCK_NOTIFICATIONS', true);
+    const mockNotifVal = this.configService.get<any>('USE_MOCK_NOTIFICATIONS', true);
+    this.useMock = mockNotifVal === true || mockNotifVal === 'true';
+    
     this.projectId = this.configService.get<string>('FIREBASE_PROJECT_ID', '');
   }
 

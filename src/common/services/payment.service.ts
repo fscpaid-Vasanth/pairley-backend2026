@@ -7,7 +7,8 @@ export class PaymentService {
   private readonly useMock: boolean;
 
   constructor(private configService: ConfigService) {
-    this.useMock = this.configService.get<boolean>('USE_MOCK_PAYMENT', true);
+    const mockPaymentVal = this.configService.get<any>('USE_MOCK_PAYMENT', true);
+    this.useMock = mockPaymentVal === true || mockPaymentVal === 'true';
   }
 
   async createOrder(amount: number, currency = 'INR', receipt: string): Promise<any> {

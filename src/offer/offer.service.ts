@@ -1,13 +1,15 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationService } from '../common/services/notification.service';
+import { OtpService } from '../common/services/otp.service';
 import { OfferType, OfferStatus, InterestStatus, SubscriptionStatus, VerificationStatus } from '@prisma/client';
 
 @Injectable()
 export class OfferService {
   constructor(
     private prisma: PrismaService,
-    private notificationService: NotificationService
+    private notificationService: NotificationService,
+    private otpService: OtpService
   ) {}
 
   async createOffer(businessId: string, data: any) {
@@ -235,7 +237,7 @@ export class OfferService {
         data: { status: OfferStatus.CLOSED },
       });
 
-      // Notify business owner
+      // Notify business owner (in-app/push)
       await this.notificationService.sendNotification(
         updatedOffer.business_id,
         'Offer Target Achieved!',
@@ -243,7 +245,8 @@ export class OfferService {
         'Offer Completed'
       );
 
-      // Notify all customers who joined
+      // Notify all customers who joined (in-app/push + SMS)
+      const customerSmsMsg = `Pairley Match! Your deal for "${updatedOffer.title}" is completed. The business will contact you soon.`;
       for (const i of updatedOffer.interests) {
         await this.notificationService.sendNotification(
           i.customer_id,
@@ -251,6 +254,31 @@ export class OfferService {
           `The deal for "${updatedOffer.title}" is ready! The business will contact you soon.`,
           'Offer Completed'
         );
+        if (i.customer.mobile) {
+          await this.otpService.sendSms(i.customer.mobile, customerSmsMsg);
+        }
+      }
+
+      // Dispatch details to merchant notification mobile numbers
+      const merchantContacts = (updatedOffer.business.notification_mobiles || '')
+        .split(',')
+        .map((num) => num.trim())
+        .filter((num) => /^\d{10}$/.test(num));
+
+      // Fallback to primary business number if no custom contacts saved
+      if (merchantContacts.length === 0 && updatedOffer.business.mobile) {
+        merchantContacts.push(updatedOffer.business.mobile);
+      }
+
+      if (merchantContacts.length > 0) {
+        const buyersList = updatedOffer.interests
+          .map((i, index) => `${index + 1}. ${i.customer.name} (${i.customer.mobile})`)
+          .join(', ');
+        const merchantSmsMsg = `Pairley Match Alert! Offer '${updatedOffer.title}' has matched. Buyers: ${buyersList}.`;
+
+        for (const contact of merchantContacts.slice(0, 3)) { // Limit to up to 3 numbers
+          await this.otpService.sendSms(contact, merchantSmsMsg);
+        }
       }
     }
 

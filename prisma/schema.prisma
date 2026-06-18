@@ -98,6 +98,7 @@ model Business {
   shop_photo          String?
   verification_status VerificationStatus @default(PENDING)
   subscription_id     String?
+  notification_mobiles String?
   created_at          DateTime           @default(now())
   updated_at          DateTime           @updatedAt
 

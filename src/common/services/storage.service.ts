@@ -14,7 +14,9 @@ export class StorageService {
   private readonly secretAccessKey: string;
 
   constructor(private configService: ConfigService) {
-    this.useMock = this.configService.get<boolean>('USE_MOCK_STORAGE', true);
+    const mockStorageVal = this.configService.get<any>('USE_MOCK_STORAGE', true);
+    this.useMock = mockStorageVal === true || mockStorageVal === 'true';
+    
     this.bucketName = this.configService.get<string>('AWS_S3_BUCKET_NAME', '');
     this.region = this.configService.get<string>('AWS_REGION', 'ap-south-1');
     this.accessKeyId = this.configService.get<string>('AWS_ACCESS_KEY_ID', '');

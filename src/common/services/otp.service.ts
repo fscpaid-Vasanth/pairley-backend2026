@@ -10,7 +10,9 @@ export class OtpService {
   private readonly templateId: string;
 
   constructor(private configService: ConfigService) {
-    this.useMock = this.configService.get<boolean>('USE_MOCK_OTP', true);
+    const mockOtpVal = this.configService.get<any>('USE_MOCK_OTP', true);
+    this.useMock = mockOtpVal === true || mockOtpVal === 'true';
+    
     this.apiKey = this.configService.get<string>('MSG91_API_KEY', '');
     this.senderId = this.configService.get<string>('MSG91_SENDER_ID', 'PRLY');
     this.templateId = this.configService.get<string>('MSG91_TEMPLATE_ID', '');
@@ -42,6 +44,42 @@ export class OtpService {
       return false;
     } catch (error) {
       this.logger.error(`Failed to send OTP via MSG91: ${error.message}`);
+      return false;
+    }
+  }
+
+  async sendSms(mobile: string, message: string): Promise<boolean> {
+    const formattedMobile = mobile.startsWith('91') ? mobile : `91${mobile}`;
+    if (this.useMock) {
+      this.logger.log(`[MOCK SMS] Sending SMS to ${formattedMobile}: "${message}"`);
+      return true;
+    }
+
+    try {
+      const url = 'https://control.msg91.com/api/v5/sms/send';
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'authkey': this.apiKey,
+        },
+        body: JSON.stringify({
+          route: '4',
+          sender: this.senderId || 'PRLY',
+          sms: [
+            {
+              message,
+              to: [formattedMobile],
+            },
+          ],
+        }),
+      });
+
+      const result = await response.json();
+      this.logger.log(`[MSG91 SMS] Sent status: ${JSON.stringify(result)}`);
+      return true;
+    } catch (error) {
+      this.logger.error(`Failed to send SMS via MSG91: ${error.message}`);
       return false;
     }
   }
