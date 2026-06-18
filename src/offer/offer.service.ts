@@ -104,9 +104,9 @@ export class OfferService {
     if (filters.businessId) {
       whereClause.business_id = filters.businessId;
     }
-    if (filters.status) {
+    if (filters.status && filters.status !== 'ALL') {
       whereClause.status = filters.status as OfferStatus;
-    } else {
+    } else if (!filters.status) {
       whereClause.status = OfferStatus.ACTIVE; // Active by default
     }
 

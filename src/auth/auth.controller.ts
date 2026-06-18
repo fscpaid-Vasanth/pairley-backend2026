@@ -128,6 +128,44 @@ class RegisterDto {
   google_uid?: string;
 }
 
+class GoogleAuthDto {
+  @IsString()
+  @IsNotEmpty()
+  name: string;
+
+  @IsEmail()
+  @IsNotEmpty()
+  email: string;
+
+  @IsString()
+  @IsNotEmpty()
+  role: 'Customer' | 'Business';
+
+  @IsString()
+  @IsOptional()
+  mobile?: string;
+
+  @IsString()
+  @IsOptional()
+  city?: string;
+
+  @IsString()
+  @IsOptional()
+  business_name?: string;
+
+  @IsString()
+  @IsOptional()
+  business_type?: string;
+
+  @IsString()
+  @IsOptional()
+  google_uid?: string;
+
+  @IsString()
+  @IsOptional()
+  profile_photo?: string;
+}
+
 class LoginDto {
   @IsString()
   @IsNotEmpty()
@@ -173,7 +211,7 @@ export class AuthController {
 
   @Post('google')
   @HttpCode(HttpStatus.OK)
-  async googleAuth(@Body() body: RegisterDto) {
+  async googleAuth(@Body() body: GoogleAuthDto) {
     return this.authService.googleUpsert(body);
   }
 

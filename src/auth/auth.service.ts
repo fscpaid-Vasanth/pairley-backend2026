@@ -207,27 +207,31 @@ export class AuthService implements OnModuleInit {
     const { role, mobile, email, name, ...extra } = data;
 
     if (role === 'Customer') {
-      // Check if customer already exists by mobile (Google UID mapped mobile)
-      let customer = await this.prisma.customer.findUnique({
-        where: { mobile },
-      });
+      let customer: any = null;
+      if (mobile) {
+        customer = await this.prisma.customer.findUnique({
+          where: { mobile },
+        });
+      }
 
       if (!customer && email) {
-        // Also try lookup by email for returning users
         customer = await this.prisma.customer.findUnique({ where: { email } });
       }
 
       if (customer) {
-        // Returning user — just issue a new JWT token (login flow)
         const token = this.generateToken(
           customer.id,
           customer.mobile,
           'Customer',
         );
-        return { token, user: customer, role: 'Customer' };
+        return { token, user: customer, role: 'Customer', exists: true };
       }
 
-      // New user — register
+      // New customer registration — check if mobile and city are provided
+      if (!mobile || !extra.city) {
+        return { exists: false, message: 'Profile details (mobile and city) are required to complete signup.' };
+      }
+
       customer = await this.prisma.customer.create({
         data: {
           name,
@@ -244,11 +248,14 @@ export class AuthService implements OnModuleInit {
         customer.mobile,
         'Customer',
       );
-      return { token, user: customer, role: 'Customer' };
+      return { token, user: customer, role: 'Customer', exists: true };
     } else if (role === 'Business') {
-      let business = await this.prisma.business.findUnique({
-        where: { mobile },
-      });
+      let business: any = null;
+      if (mobile) {
+        business = await this.prisma.business.findUnique({
+          where: { mobile },
+        });
+      }
 
       if (!business && email) {
         try {
@@ -264,19 +271,24 @@ export class AuthService implements OnModuleInit {
           business.mobile,
           'Business',
         );
-        return { token, user: business, role: 'Business' };
+        return { token, user: business, role: 'Business', exists: true };
+      }
+
+      // New business registration — check if mobile, city, business name and type are provided
+      if (!mobile || !extra.city || !extra.business_name || !extra.business_type) {
+        return { exists: false, message: 'Profile details (mobile, city, business name, and business type) are required to complete signup.' };
       }
 
       business = await this.prisma.business.create({
         data: {
           owner_name: name,
-          business_name: extra.business_name || `${name}'s Shop`,
-          business_type: extra.business_type || 'Retail',
+          business_name: extra.business_name,
+          business_type: extra.business_type,
           category: extra.category || 'General',
           mobile,
           email: email || '',
           address: extra.address || '',
-          city: extra.city || '',
+          city: extra.city,
           state: extra.state || '',
           pincode: extra.pincode || '',
           shop_photo: extra.profile_photo || null,
@@ -288,7 +300,7 @@ export class AuthService implements OnModuleInit {
         business.mobile,
         'Business',
       );
-      return { token, user: business, role: 'Business' };
+      return { token, user: business, role: 'Business', exists: true };
     } else {
       throw new BadRequestException('Invalid role for Google authentication');
     }
