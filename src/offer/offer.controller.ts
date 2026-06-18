@@ -118,4 +118,16 @@ export class OfferController {
   async getInterestedCustomers(@CurrentUser() user: any) {
     return this.offerService.getInterestedCustomers(user.sub);
   }
+
+  @Put('interest/:id/status')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.BUSINESS)
+  async updateInterestStatus(
+    @CurrentUser() user: any,
+    @Param('id') interestId: string,
+    @Body('status') status: string
+  ) {
+    return this.offerService.updateInterestStatus(user.sub, interestId, status);
+  }
 }
+

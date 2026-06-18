@@ -329,4 +329,27 @@ export class OfferService {
       orderBy: { created_at: 'desc' },
     });
   }
+
+  async updateInterestStatus(businessId: string, interestId: string, status: string) {
+    const interest = await this.prisma.offerInterest.findUnique({
+      where: { id: interestId },
+      include: { offer: true },
+    });
+
+    if (!interest) {
+      throw new NotFoundException('Interest record not found');
+    }
+
+    if (interest.offer.business_id !== businessId) {
+      throw new ForbiddenException('You do not own the offer associated with this interest');
+    }
+
+    const updated = await this.prisma.offerInterest.update({
+      where: { id: interestId },
+      data: { status: status as any },
+    });
+
+    return { success: true, interest: updated };
+  }
 }
+
