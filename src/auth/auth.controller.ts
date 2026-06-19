@@ -180,6 +180,30 @@ class GoogleAuthDto {
   @IsString()
   @IsOptional()
   pincode?: string;
+
+  @IsString()
+  @IsOptional()
+  aadhaar_number?: string;
+
+  @IsString()
+  @IsOptional()
+  gst_number?: string;
+
+  @IsString()
+  @IsOptional()
+  pan_number?: string;
+
+  @IsString()
+  @IsOptional()
+  shop_photo?: string;
+
+  @IsString()
+  @IsOptional()
+  aadhaar_photo?: string;
+
+  @IsString()
+  @IsOptional()
+  pan_photo?: string;
 }
 
 class LoginDto {
