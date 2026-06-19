@@ -60,7 +60,6 @@ export class StorageService {
         Key: key,
         Body: file.buffer,
         ContentType: file.mimetype,
-        ACL: 'public-read' as any,
       }));
 
       const publicUrl = `https://${this.bucketName}.s3.${this.region}.amazonaws.com/${key}`;
