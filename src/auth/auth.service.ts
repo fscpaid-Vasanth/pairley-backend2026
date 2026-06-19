@@ -8,7 +8,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { OtpService } from '../common/services/otp.service';
-import { VerificationStatus } from '@prisma/client';
+import { VerificationStatus, SubscriptionStatus } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 @Injectable()
@@ -188,16 +188,38 @@ export class AuthService implements OnModuleInit {
           pan_number: extra.pan_number || null,
           gst_number: extra.gst_number || null,
           shop_photo: extra.shop_photo || null,
-          verification_status: VerificationStatus.PENDING, // needs admin approval
+          verification_status: VerificationStatus.APPROVED, // Auto-approved for testing/onboarding
         },
       });
 
+      // Create a default Active Trial/Basic subscription
+      const startDate = new Date();
+      const expiryDate = new Date();
+      expiryDate.setDate(startDate.getDate() + 30); // 30 days trial
+      const subscription = await this.prisma.subscription.create({
+        data: {
+          business_id: business.id,
+          plan_name: 'Basic',
+          amount: 0,
+          start_date: startDate,
+          expiry_date: expiryDate,
+          status: SubscriptionStatus.ACTIVE,
+          payment_reference: 'MOCK_TRIAL_SIGNUP',
+        },
+      });
+
+      // Update business with subscription reference
+      const updatedBusiness = await this.prisma.business.update({
+        where: { id: business.id },
+        data: { subscription_id: subscription.id },
+      });
+
       const token = this.generateToken(
-        business.id,
-        business.mobile,
+        updatedBusiness.id,
+        updatedBusiness.mobile,
         'Business',
       );
-      return { token, user: business, role: 'Business' };
+      return { token, user: updatedBusiness, role: 'Business' };
     } else {
       throw new BadRequestException('Invalid registration role');
     }
@@ -239,6 +261,7 @@ export class AuthService implements OnModuleInit {
           email: email || null,
           gender: extra.gender || 'Other',
           city: extra.city || null,
+          address: extra.address || null,
           profile_photo: extra.profile_photo || null,
           verification_status: VerificationStatus.VERIFIED,
         },
@@ -292,15 +315,41 @@ export class AuthService implements OnModuleInit {
           state: extra.state || '',
           pincode: extra.pincode || '',
           shop_photo: extra.profile_photo || null,
-          verification_status: VerificationStatus.PENDING,
+          verification_status: VerificationStatus.APPROVED, // Auto-approved for testing/onboarding
+          aadhaar_number: extra.aadhaar_number || null,
+          gst_number: extra.gst_number || null,
+          pan_number: extra.pan_number || null,
         },
       });
+
+      // Create a default Active Trial/Basic subscription
+      const startDate = new Date();
+      const expiryDate = new Date();
+      expiryDate.setDate(startDate.getDate() + 30); // 30 days trial
+      const subscription = await this.prisma.subscription.create({
+        data: {
+          business_id: business.id,
+          plan_name: 'Basic',
+          amount: 0,
+          start_date: startDate,
+          expiry_date: expiryDate,
+          status: SubscriptionStatus.ACTIVE,
+          payment_reference: 'MOCK_TRIAL_SIGNUP',
+        },
+      });
+
+      // Update business with subscription reference
+      const updatedBusiness = await this.prisma.business.update({
+        where: { id: business.id },
+        data: { subscription_id: subscription.id },
+      });
+
       const token = this.generateToken(
-        business.id,
-        business.mobile,
+        updatedBusiness.id,
+        updatedBusiness.mobile,
         'Business',
       );
-      return { token, user: business, role: 'Business', exists: true };
+      return { token, user: updatedBusiness, role: 'Business', exists: true };
     } else {
       throw new BadRequestException('Invalid role for Google authentication');
     }

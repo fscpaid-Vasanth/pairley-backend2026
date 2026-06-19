@@ -66,6 +66,7 @@ model Customer {
   age                 Int?
   city                String?
   state               String?
+  address             String?
   profile_photo       String?
   referral_code       String?
   verification_status VerificationStatus @default(UNVERIFIED)

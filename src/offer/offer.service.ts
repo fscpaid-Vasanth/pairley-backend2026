@@ -149,6 +149,19 @@ export class OfferService {
             shop_photo: true,
           },
         },
+        interests: {
+          include: {
+            customer: {
+              select: {
+                id: true,
+                name: true,
+                mobile: true,
+                email: true,
+                city: true,
+              },
+            },
+          },
+        },
       },
     });
 
@@ -215,13 +228,28 @@ export class OfferService {
       },
     });
 
+    const currentInterest = updatedOffer.interests.find((i) => i.customer_id === customerId);
+    const customerName = currentInterest?.customer?.name || 'A customer';
+    const customerMobile = currentInterest?.customer?.mobile || '';
+    const customerCity = currentInterest?.customer?.city || '';
+
     // Notify business owner about a partner joining
     await this.notificationService.sendNotification(
       updatedOffer.business_id,
       'Partner Joined Deal',
-      `A new customer joined your offer: "${updatedOffer.title}"! Total joined: ${updatedOffer.joined_people}`,
+      `A new customer joined your offer: "${updatedOffer.title}"!\nName: ${customerName}\nContact: ${customerMobile}\nCity: ${customerCity}\nTotal joined: ${updatedOffer.joined_people}`,
       'Partner Joined'
     );
+
+    // Send immediate SMS alert to shop owner
+    if (updatedOffer.business.mobile) {
+      const interestSmsMsg = `Pairley Interest Alert! Customer ${customerName} (${customerMobile}) from ${customerCity} showed interest in your deal "${updatedOffer.title}".`;
+      try {
+        await this.otpService.sendSms(updatedOffer.business.mobile, interestSmsMsg);
+      } catch (smsErr) {
+        console.error('Failed to send SMS to merchant:', smsErr);
+      }
+    }
 
     // 5. Check if required target is reached
     if (updatedOffer.joined_people >= updatedOffer.required_people) {
