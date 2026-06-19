@@ -8,6 +8,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { OtpService } from '../common/services/otp.service';
+import { StorageService } from '../common/services/storage.service';
 import { VerificationStatus, SubscriptionStatus } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
@@ -17,6 +18,7 @@ export class AuthService implements OnModuleInit {
     private prisma: PrismaService,
     private jwtService: JwtService,
     private otpService: OtpService,
+    private storageService: StorageService,
   ) {}
 
   async onModuleInit() {
@@ -250,8 +252,8 @@ export class AuthService implements OnModuleInit {
       }
 
       // New customer registration — check if mobile and city are provided
-      if (!mobile || !extra.city) {
-        return { exists: false, message: 'Profile details (mobile and city) are required to complete signup.' };
+      if (!mobile || !extra.city || !extra.state || !extra.pincode) {
+        return { exists: false, message: 'Profile details (mobile, city, state, and pincode) are required to complete signup.' };
       }
 
       customer = await this.prisma.customer.create({
@@ -261,6 +263,8 @@ export class AuthService implements OnModuleInit {
           email: email || null,
           gender: extra.gender || 'Other',
           city: extra.city || null,
+          state: extra.state || null,
+          pincode: extra.pincode || null,
           address: extra.address || null,
           profile_photo: extra.profile_photo || null,
           verification_status: VerificationStatus.VERIFIED,
@@ -298,8 +302,34 @@ export class AuthService implements OnModuleInit {
       }
 
       // New business registration — check if mobile, city, business name and type are provided
-      if (!mobile || !extra.city || !extra.business_name || !extra.business_type) {
-        return { exists: false, message: 'Profile details (mobile, city, business name, and business type) are required to complete signup.' };
+      if (!mobile || !extra.city || !extra.state || !extra.pincode || !extra.business_name || !extra.business_type) {
+        return { exists: false, message: 'Profile details (mobile, city, state, pincode, business name, and business type) are required to complete signup.' };
+      }
+
+      let shopPhotoUrl: string | null = null;
+      let aadhaarPhotoUrl: string | null = null;
+      let panPhotoUrl: string | null = null;
+
+      if (extra.shop_photo) {
+        shopPhotoUrl = await this.storageService.uploadBase64(
+          extra.shop_photo,
+          'businesses/shops',
+          `shop-${mobile}.png`,
+        );
+      }
+      if (extra.aadhaar_photo) {
+        aadhaarPhotoUrl = await this.storageService.uploadBase64(
+          extra.aadhaar_photo,
+          'businesses/documents',
+          `aadhaar-${mobile}.png`,
+        );
+      }
+      if (extra.pan_photo) {
+        panPhotoUrl = await this.storageService.uploadBase64(
+          extra.pan_photo,
+          'businesses/documents',
+          `pan-${mobile}.png`,
+        );
       }
 
       business = await this.prisma.business.create({
@@ -312,13 +342,15 @@ export class AuthService implements OnModuleInit {
           email: email || '',
           address: extra.address || '',
           city: extra.city,
-          state: extra.state || '',
-          pincode: extra.pincode || '',
-          shop_photo: extra.profile_photo || null,
+          state: extra.state,
+          pincode: extra.pincode,
+          shop_photo: shopPhotoUrl,
+          aadhaar_photo: aadhaarPhotoUrl,
+          pan_photo: panPhotoUrl,
           verification_status: VerificationStatus.APPROVED, // Auto-approved for testing/onboarding
           aadhaar_number: extra.aadhaar_number || null,
-          gst_number: extra.gst_number || null,
-          pan_number: extra.pan_number || null,
+          gst_number: (extra.gst_number && extra.gst_number.trim()) ? extra.gst_number : null,
+          pan_number: (extra.pan_number && extra.pan_number.trim()) ? extra.pan_number : null,
         },
       });
 

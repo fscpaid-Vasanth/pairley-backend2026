@@ -67,6 +67,7 @@ model Customer {
   city                String?
   state               String?
   address             String?
+  pincode             String?
   profile_photo       String?
   referral_code       String?
   verification_status VerificationStatus @default(UNVERIFIED)
@@ -94,7 +95,9 @@ model Business {
   state               String
   pincode             String
   aadhaar_number      String?
+  aadhaar_photo       String?
   pan_number          String?
+  pan_photo           String?
   gst_number          String?
   shop_photo          String?
   verification_status VerificationStatus @default(PENDING)

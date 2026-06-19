@@ -71,5 +71,33 @@ export class StorageService {
       throw new Error(`S3 upload failed: ${error.message}`);
     }
   }
+
+  async uploadBase64(base64Str: string, folder: string, originalName: string): Promise<string> {
+    if (!base64Str || !base64Str.startsWith('data:')) {
+      return base64Str; // Return as-is if it's already a URL or invalid
+    }
+    
+    try {
+      const match = base64Str.match(/^data:([^;]+);base64,(.+)$/);
+      if (!match) {
+        throw new Error('Invalid base64 format');
+      }
+      
+      const mimetype = match[1];
+      const buffer = Buffer.from(match[2], 'base64');
+      
+      // Construct a mock Express.Multer.File object
+      const file: any = {
+        buffer,
+        originalname: originalName || `uploaded-file.${mimetype.split('/')[1] || 'png'}`,
+        mimetype,
+      };
+      
+      return this.uploadFile(file, folder);
+    } catch (err) {
+      this.logger.error(`Failed to upload base64: ${err.message}`);
+      return '';
+    }
+  }
 }
 

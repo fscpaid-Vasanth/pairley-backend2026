@@ -241,13 +241,22 @@ export class OfferService {
       'Partner Joined'
     );
 
-    // Send immediate SMS alert to shop owner
-    if (updatedOffer.business.mobile) {
-      const interestSmsMsg = `Pairley Interest Alert! Customer ${customerName} (${customerMobile}) from ${customerCity} showed interest in your deal "${updatedOffer.title}".`;
+    // Send immediate SMS alert to shop owner's notification mobiles (up to 3)
+    const interestSmsMsg = `Pairley Interest Alert! Customer ${customerName} (${customerMobile}) from ${customerCity} showed interest in your deal "${updatedOffer.title}".`;
+    const notifMobiles = (updatedOffer.business.notification_mobiles || '')
+      .split(',')
+      .map((num) => num.trim())
+      .filter((num) => /^\d{10}$/.test(num));
+
+    if (notifMobiles.length === 0 && updatedOffer.business.mobile) {
+      notifMobiles.push(updatedOffer.business.mobile);
+    }
+
+    for (const contact of notifMobiles.slice(0, 3)) {
       try {
-        await this.otpService.sendSms(updatedOffer.business.mobile, interestSmsMsg);
+        await this.otpService.sendSms(contact, interestSmsMsg);
       } catch (smsErr) {
-        console.error('Failed to send SMS to merchant:', smsErr);
+        console.error(`Failed to send interest SMS to ${contact}:`, smsErr);
       }
     }
 
