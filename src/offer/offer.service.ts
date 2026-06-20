@@ -50,6 +50,8 @@ export class OfferService {
         start_date: new Date(data.start_date),
         end_date: new Date(data.end_date),
         offer_image: data.offer_image || null,
+        facility_images: data.facility_images || [],
+        facility_details: data.facility_details || null,
         status: OfferStatus.ACTIVE, // Published directly as active for validated business
       },
     });
@@ -95,7 +97,7 @@ export class OfferService {
     return { success: true, message: 'Offer deleted successfully' };
   }
 
-  async listOffers(filters: { category?: string; businessId?: string; search?: string; status?: string }) {
+  async listOffers(filters: { category?: string; businessId?: string; search?: string; status?: string; mall?: string }) {
     const whereClause: any = {};
 
     if (filters.category) {
@@ -108,6 +110,12 @@ export class OfferService {
       whereClause.status = filters.status as OfferStatus;
     } else if (!filters.status) {
       whereClause.status = OfferStatus.ACTIVE; // Active by default
+    }
+
+    if (filters.mall) {
+      whereClause.business = {
+        mall_name: filters.mall
+      };
     }
 
     if (filters.search) {
@@ -125,6 +133,7 @@ export class OfferService {
             business_name: true,
             city: true,
             shop_photo: true,
+            mall_name: true,
           },
         },
       },
@@ -214,11 +223,15 @@ export class OfferService {
       },
     });
 
-    // 4. Update offer joined_people count
+    // 4. Update offer joined_people count based on actual unique record count in DB
+    const actualCount = await this.prisma.offerInterest.count({
+      where: { offer_id: offerId }
+    });
+
     const updatedOffer = await this.prisma.offer.update({
       where: { id: offerId },
       data: {
-        joined_people: { increment: 1 },
+        joined_people: actualCount,
       },
       include: {
         interests: {

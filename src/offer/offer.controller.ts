@@ -43,6 +43,13 @@ class CreateOfferDto {
   @IsString()
   @IsOptional()
   offer_image?: string;
+
+  @IsOptional()
+  facility_images?: string[];
+
+  @IsString()
+  @IsOptional()
+  facility_details?: string;
 }
 
 class InterestDto {
@@ -83,9 +90,10 @@ export class OfferController {
     @Query('category') category?: string,
     @Query('businessId') businessId?: string,
     @Query('search') search?: string,
-    @Query('status') status?: string
+    @Query('status') status?: string,
+    @Query('mall') mall?: string
   ) {
-    return this.offerService.listOffers({ category, businessId, search, status });
+    return this.offerService.listOffers({ category, businessId, search, status, mall });
   }
 
   @Get('details/:id')

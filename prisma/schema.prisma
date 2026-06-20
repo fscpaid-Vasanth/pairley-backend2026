@@ -94,6 +94,7 @@ model Business {
   city                String
   state               String
   pincode             String
+  mall_name           String?
   aadhaar_number      String?
   aadhaar_photo       String?
   pan_number          String?
@@ -143,6 +144,8 @@ model Offer {
   start_date      DateTime
   end_date        DateTime
   offer_image     String?
+  facility_images String[]       @default([])
+  facility_details String?
   status          OfferStatus    @default(DRAFT)
   created_at      DateTime       @default(now())
   updated_at      DateTime       @updatedAt

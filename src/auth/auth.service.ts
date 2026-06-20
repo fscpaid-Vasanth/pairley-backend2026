@@ -54,9 +54,9 @@ export class AuthService implements OnModuleInit {
       },
     });
 
-    const success = await this.otpService.sendOtp(mobile, code);
-    if (!success) {
-      throw new BadRequestException('Failed to send OTP. Please try again.');
+    const otpResult = await this.otpService.sendOtp(mobile, code);
+    if (!otpResult.success) {
+      throw new BadRequestException(otpResult.error || 'Failed to send OTP. Please try again.');
     }
 
     return { success: true, message: 'OTP sent successfully' };
