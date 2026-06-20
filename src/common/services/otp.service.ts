@@ -130,12 +130,12 @@ export class OtpService {
       return true;
     }
 
-    // If no SMS template configured, fall back to the OTP SendOTP API with a custom message log
-    const smsTemplate = this.smsTemplateId || this.templateId;
-    if (!smsTemplate) {
-      this.logger.warn(`[MSG91 SMS] No SMS template configured. Skipping SMS to ${formattedMobile}`);
-      return false;
+    // If no SMS template configured, fall back to mock logging to prevent matching transaction crashes
+    if (!this.smsTemplateId) {
+      this.logger.warn(`[MOCK MSG91 SMS] MSG91_SMS_TEMPLATE_ID is not configured. Mocking SMS to ${formattedMobile}: "${message}"`);
+      return true;
     }
+    const smsTemplate = this.smsTemplateId;
 
     try {
       const url = 'https://control.msg91.com/api/v5/flow/';

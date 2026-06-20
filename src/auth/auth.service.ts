@@ -230,27 +230,46 @@ export class AuthService implements OnModuleInit {
   async googleUpsert(data: any) {
     const { role, mobile, email, name, ...extra } = data;
 
+    // 1. First, check if the email exists in Customer table (regardless of the requested role)
+    let customer: any = null;
+    if (email) {
+      customer = await this.prisma.customer.findUnique({ where: { email } });
+    }
+    if (!customer && mobile) {
+      customer = await this.prisma.customer.findUnique({ where: { mobile } });
+    }
+    if (customer) {
+      const token = this.generateToken(
+        customer.id,
+        customer.mobile,
+        'Customer',
+      );
+      return { token, user: customer, role: 'Customer', exists: true };
+    }
+
+    // 2. Next, check if the email exists in Business table (regardless of the requested role)
+    let business: any = null;
+    if (email) {
+      try {
+        business = await this.prisma.business.findUnique({ where: { email } });
+      } catch (_) {}
+    }
+    if (!business && mobile) {
+      try {
+        business = await this.prisma.business.findUnique({ where: { mobile } });
+      } catch (_) {}
+    }
+    if (business) {
+      const token = this.generateToken(
+        business.id,
+        business.mobile,
+        'Business',
+      );
+      return { token, user: business, role: 'Business', exists: true };
+    }
+
+    // 3. If the user doesn't exist, proceed with onboarding checking using the requested role
     if (role === 'Customer') {
-      let customer: any = null;
-      if (mobile) {
-        customer = await this.prisma.customer.findUnique({
-          where: { mobile },
-        });
-      }
-
-      if (!customer && email) {
-        customer = await this.prisma.customer.findUnique({ where: { email } });
-      }
-
-      if (customer) {
-        const token = this.generateToken(
-          customer.id,
-          customer.mobile,
-          'Customer',
-        );
-        return { token, user: customer, role: 'Customer', exists: true };
-      }
-
       // New customer registration — check if mobile and city are provided
       if (!mobile || !extra.city || !extra.state || !extra.pincode) {
         return { exists: false, message: 'Profile details (mobile, city, state, and pincode) are required to complete signup.' };
@@ -277,30 +296,6 @@ export class AuthService implements OnModuleInit {
       );
       return { token, user: customer, role: 'Customer', exists: true };
     } else if (role === 'Business') {
-      let business: any = null;
-      if (mobile) {
-        business = await this.prisma.business.findUnique({
-          where: { mobile },
-        });
-      }
-
-      if (!business && email) {
-        try {
-          business = await this.prisma.business.findUnique({
-            where: { email },
-          });
-        } catch (_) {}
-      }
-
-      if (business) {
-        const token = this.generateToken(
-          business.id,
-          business.mobile,
-          'Business',
-        );
-        return { token, user: business, role: 'Business', exists: true };
-      }
-
       // New business registration — check if mobile, city, business name and type are provided
       if (!mobile || !extra.city || !extra.state || !extra.pincode || !extra.business_name || !extra.business_type) {
         return { exists: false, message: 'Profile details (mobile, city, state, pincode, business name, and business type) are required to complete signup.' };

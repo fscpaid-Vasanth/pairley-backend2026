@@ -298,14 +298,22 @@ export class OfferService {
       // Notify all customers who joined (in-app/push + SMS)
       const customerSmsMsg = `Pairley Match! Your deal for "${updatedOffer.title}" is completed. The business will contact you soon.`;
       for (const i of updatedOffer.interests) {
-        await this.notificationService.sendNotification(
-          i.customer_id,
-          'Group Deal Completed!',
-          `The deal for "${updatedOffer.title}" is ready! The business will contact you soon.`,
-          'Offer Completed'
-        );
+        try {
+          await this.notificationService.sendNotification(
+            i.customer_id,
+            'Group Deal Completed!',
+            `The deal for "${updatedOffer.title}" is ready! The business will contact you soon.`,
+            'Offer Completed'
+          );
+        } catch (notifErr) {
+          console.error(`Failed to send match completion in-app notification to customer ${i.customer_id}:`, notifErr);
+        }
         if (i.customer.mobile) {
-          await this.otpService.sendSms(i.customer.mobile, customerSmsMsg);
+          try {
+            await this.otpService.sendSms(i.customer.mobile, customerSmsMsg);
+          } catch (smsErr) {
+            console.error(`Failed to send match completion SMS to customer ${i.customer.mobile}:`, smsErr);
+          }
         }
       }
 
@@ -327,7 +335,11 @@ export class OfferService {
         const merchantSmsMsg = `Pairley Match Alert! Offer '${updatedOffer.title}' has matched. Buyers: ${buyersList}.`;
 
         for (const contact of merchantContacts.slice(0, 3)) { // Limit to up to 3 numbers
-          await this.otpService.sendSms(contact, merchantSmsMsg);
+          try {
+            await this.otpService.sendSms(contact, merchantSmsMsg);
+          } catch (smsErr) {
+            console.error(`Failed to send match completion SMS to merchant ${contact}:`, smsErr);
+          }
         }
       }
     }
