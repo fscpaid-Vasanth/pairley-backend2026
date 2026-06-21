@@ -229,16 +229,23 @@ export class AuthService implements OnModuleInit {
 
   async googleUpsert(data: any) {
     const { role, mobile, email, name, ...extra } = data;
+    const searchEmail = email?.trim().toLowerCase() || null;
 
     // 1. First, check if the email exists in Customer table (regardless of the requested role)
     let customer: any = null;
-    if (email) {
-      customer = await this.prisma.customer.findUnique({ where: { email } });
+    if (searchEmail) {
+      customer = await this.prisma.customer.findUnique({ where: { email: searchEmail } });
     }
     if (!customer && mobile) {
       customer = await this.prisma.customer.findUnique({ where: { mobile } });
     }
     if (customer) {
+      if (searchEmail && (!customer.email || customer.email !== searchEmail)) {
+        customer = await this.prisma.customer.update({
+          where: { id: customer.id },
+          data: { email: searchEmail },
+        });
+      }
       const token = this.generateToken(
         customer.id,
         customer.mobile,
@@ -249,9 +256,9 @@ export class AuthService implements OnModuleInit {
 
     // 2. Next, check if the email exists in Business table (regardless of the requested role)
     let business: any = null;
-    if (email) {
+    if (searchEmail) {
       try {
-        business = await this.prisma.business.findUnique({ where: { email } });
+        business = await this.prisma.business.findUnique({ where: { email: searchEmail } });
       } catch (_) {}
     }
     if (!business && mobile) {
@@ -260,6 +267,12 @@ export class AuthService implements OnModuleInit {
       } catch (_) {}
     }
     if (business) {
+      if (searchEmail && (!business.email || business.email !== searchEmail)) {
+        business = await this.prisma.business.update({
+          where: { id: business.id },
+          data: { email: searchEmail },
+        });
+      }
       const token = this.generateToken(
         business.id,
         business.mobile,
