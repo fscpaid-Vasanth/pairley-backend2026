@@ -242,3 +242,19 @@ model OtpVerification {
 
   @@map("otp_verifications")
 }
+
+model CoBuyMessage {
+  id               String   @id @default(uuid())
+  deal_id          String
+  sender_id        String
+  sender_name      String
+  text             String
+  is_schedule_card Boolean  @default(false)
+  day              String?
+  time_slot        String?
+  is_system        Boolean  @default(false)
+  created_at       DateTime @default(now())
+
+  @@map("co_buy_messages")
+}
+

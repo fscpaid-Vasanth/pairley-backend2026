@@ -413,5 +413,47 @@ export class OfferService {
 
     return { success: true, interest: updated };
   }
+
+  async sendCoBuyMessage(customerId: string, dealId: string, data: any) {
+    const interest = await this.prisma.offerInterest.findUnique({
+      where: {
+        offer_id_customer_id: {
+          offer_id: dealId,
+          customer_id: customerId,
+        },
+      },
+    });
+
+    if (!interest) {
+      throw new BadRequestException('You must show interest in this deal to send messages.');
+    }
+
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: customerId }
+    });
+    const senderName = customer?.name || 'Anonymous Buyer';
+
+    const msg = await this.prisma.coBuyMessage.create({
+      data: {
+        deal_id: dealId,
+        sender_id: customerId,
+        sender_name: senderName,
+        text: data.text,
+        is_schedule_card: data.is_schedule_card ?? false,
+        day: data.day || null,
+        time_slot: data.time_slot || null,
+        is_system: data.is_system ?? false,
+      },
+    });
+
+    return msg;
+  }
+
+  async getCoBuyMessages(dealId: string) {
+    return this.prisma.coBuyMessage.findMany({
+      where: { deal_id: dealId },
+      orderBy: { created_at: 'asc' },
+    });
+  }
 }
 

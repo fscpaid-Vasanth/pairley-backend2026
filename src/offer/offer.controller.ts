@@ -137,5 +137,23 @@ export class OfferController {
   ) {
     return this.offerService.updateInterestStatus(user.sub, interestId, status);
   }
+
+  @Post('chat/:dealId')
+  @UseGuards(JwtAuthGuard)
+  async sendCoBuyMessage(
+    @CurrentUser() user: any,
+    @Param('dealId') dealId: string,
+    @Body() body: any
+  ) {
+    return this.offerService.sendCoBuyMessage(user.sub, dealId, body);
+  }
+
+  @Get('chat/:dealId')
+  @UseGuards(JwtAuthGuard)
+  async getCoBuyMessages(
+    @Param('dealId') dealId: string
+  ) {
+    return this.offerService.getCoBuyMessages(dealId);
+  }
 }
 
