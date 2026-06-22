@@ -126,6 +126,10 @@ class RegisterDto {
   @IsString()
   @IsOptional()
   google_uid?: string;
+
+  @IsString()
+  @IsOptional()
+  mall_name?: string;
 }
 
 class GoogleAuthDto {
@@ -204,6 +208,10 @@ class GoogleAuthDto {
   @IsString()
   @IsOptional()
   pan_photo?: string;
+
+  @IsString()
+  @IsOptional()
+  mall_name?: string;
 }
 
 class LoginDto {

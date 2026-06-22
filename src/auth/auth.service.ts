@@ -190,6 +190,7 @@ export class AuthService implements OnModuleInit {
           pan_number: extra.pan_number || null,
           gst_number: extra.gst_number || null,
           shop_photo: extra.shop_photo || null,
+          mall_name: extra.mall_name || null,
           verification_status: VerificationStatus.APPROVED, // Auto-approved for testing/onboarding
         },
       });
@@ -359,6 +360,7 @@ export class AuthService implements OnModuleInit {
           aadhaar_number: extra.aadhaar_number || null,
           gst_number: (extra.gst_number && extra.gst_number.trim()) ? extra.gst_number : null,
           pan_number: (extra.pan_number && extra.pan_number.trim()) ? extra.pan_number : null,
+          mall_name: extra.mall_name || null,
         },
       });
 
