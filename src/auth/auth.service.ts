@@ -104,6 +104,9 @@ export class AuthService implements OnModuleInit {
     }
 
     if (business) {
+      if (business.verification_status !== VerificationStatus.APPROVED) {
+        throw new BadRequestException('Your merchant account is pending admin approval.');
+      }
       const token = this.generateToken(
         business.id,
         business.mobile,
@@ -191,7 +194,7 @@ export class AuthService implements OnModuleInit {
           gst_number: extra.gst_number || null,
           shop_photo: extra.shop_photo || null,
           mall_name: extra.mall_name || null,
-          verification_status: VerificationStatus.APPROVED, // Auto-approved for testing/onboarding
+          verification_status: VerificationStatus.PENDING,
         },
       });
 
@@ -268,6 +271,9 @@ export class AuthService implements OnModuleInit {
       } catch (_) {}
     }
     if (business) {
+      if (business.verification_status !== VerificationStatus.APPROVED) {
+        throw new BadRequestException('Your merchant account is pending admin approval.');
+      }
       if (searchEmail && (!business.email || business.email !== searchEmail)) {
         business = await this.prisma.business.update({
           where: { id: business.id },
@@ -356,7 +362,7 @@ export class AuthService implements OnModuleInit {
           shop_photo: shopPhotoUrl,
           aadhaar_photo: aadhaarPhotoUrl,
           pan_photo: panPhotoUrl,
-          verification_status: VerificationStatus.APPROVED, // Auto-approved for testing/onboarding
+          verification_status: VerificationStatus.PENDING,
           aadhaar_number: extra.aadhaar_number || null,
           gst_number: (extra.gst_number && extra.gst_number.trim()) ? extra.gst_number : null,
           pan_number: (extra.pan_number && extra.pan_number.trim()) ? extra.pan_number : null,
@@ -431,6 +437,9 @@ export class AuthService implements OnModuleInit {
       const match = await bcrypt.compare(password, business.password_hash);
       if (!match) {
         throw new UnauthorizedException('Invalid business credentials');
+      }
+      if (business.verification_status !== VerificationStatus.APPROVED) {
+        throw new UnauthorizedException('Your merchant account is pending admin approval.');
       }
       const token = this.generateToken(
         business.id,
