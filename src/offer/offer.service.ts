@@ -52,6 +52,7 @@ export class OfferService {
         offer_image: data.offer_image || null,
         facility_images: data.facility_images || [],
         facility_details: data.facility_details || null,
+        whatsapp_number: data.whatsapp_number || null,
         status: OfferStatus.ACTIVE, // Published directly as active for validated business
       },
     });
@@ -456,6 +457,83 @@ export class OfferService {
       where: { deal_id: dealId },
       orderBy: { created_at: 'asc' },
     });
+  }
+
+  async createLead(customerId: string, offerId: string) {
+    const offer = await this.prisma.offer.findUnique({
+      where: { id: offerId },
+      include: { business: true }
+    });
+
+    if (!offer) {
+      throw new NotFoundException('Offer not found');
+    }
+
+    // 24-hour duplicate check
+    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const existingLead = await this.prisma.lead.findFirst({
+      where: {
+        customer_id: customerId,
+        offer_id: offerId,
+        created_at: {
+          gte: twentyFourHoursAgo
+        }
+      }
+    });
+
+    if (existingLead) {
+      throw new BadRequestException('You have already expressed interest in this deal.');
+    }
+
+    const customer = await this.prisma.customer.findUnique({
+      where: { id: customerId }
+    });
+
+    if (!customer) {
+      throw new NotFoundException('Customer profile not found');
+    }
+
+    const lead = await this.prisma.lead.create({
+      data: {
+        customer_id: customerId,
+        customer_name: customer.name,
+        customer_mobile: customer.mobile,
+        offer_id: offerId,
+        offer_name: offer.title,
+        shop_id: offer.business_id,
+        shop_name: offer.business.business_name,
+        status: 'Interested'
+      }
+    });
+
+    // Collate target numbers: offer's whatsapp_number, business notification_mobiles, and business mobile
+    const mobiles: string[] = [];
+    if (offer.whatsapp_number) {
+      mobiles.push(offer.whatsapp_number);
+    }
+    if (offer.business.notification_mobiles) {
+      const notifs = offer.business.notification_mobiles
+        .split(',')
+        .map(num => num.trim())
+        .filter(num => /^\d{10}$/.test(num));
+      mobiles.push(...notifs);
+    }
+    if (mobiles.length === 0 && offer.business.mobile) {
+      mobiles.push(offer.business.mobile);
+    }
+
+    // Unique target mobiles (up to 3)
+    const uniqueMobiles = [...new Set(mobiles)].slice(0, 3);
+
+    return {
+      success: true,
+      lead,
+      targetMobiles: uniqueMobiles,
+      offerName: offer.title,
+      shopName: offer.business.business_name,
+      customerName: customer.name,
+      customerMobile: customer.mobile
+    };
   }
 }
 

@@ -50,6 +50,10 @@ class CreateOfferDto {
   @IsString()
   @IsOptional()
   facility_details?: string;
+
+  @IsString()
+  @IsOptional()
+  whatsapp_number?: string;
 }
 
 class InterestDto {
@@ -111,6 +115,13 @@ export class OfferController {
   @Roles(Role.CUSTOMER)
   async expressInterest(@CurrentUser() user: any, @Body() body: InterestDto) {
     return this.offerService.expressInterest(user.sub, body.offerId);
+  }
+
+  @Post('lead')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.CUSTOMER)
+  async createLead(@CurrentUser() user: any, @Body() body: InterestDto) {
+    return this.offerService.createLead(user.sub, body.offerId);
   }
 
   @Post('ready-to-buy')

@@ -147,6 +147,7 @@ model Offer {
   facility_images String[]       @default([])
   facility_details String?
   status          OfferStatus    @default(DRAFT)
+  whatsapp_number String?
   created_at      DateTime       @default(now())
   updated_at      DateTime       @updatedAt
 
@@ -256,5 +257,20 @@ model CoBuyMessage {
   created_at       DateTime @default(now())
 
   @@map("co_buy_messages")
+}
+
+model Lead {
+  id              String   @id @default(uuid())
+  customer_id     String
+  customer_name   String
+  customer_mobile String
+  offer_id        String
+  offer_name      String
+  shop_id         String
+  shop_name       String
+  created_at      DateTime @default(now())
+  status          String   @default("Interested")
+
+  @@map("leads")
 }
 
