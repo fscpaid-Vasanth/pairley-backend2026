@@ -28,9 +28,9 @@ export class OtpService {
 
     try {
       const formattedMobile = mobile.startsWith('91') ? mobile : `91${mobile}`;
-      const url = `https://control.msg91.com/api/v5/otp?template_id=${this.templateId}&mobile=${formattedMobile}&otp=${code}`;
+      const url = `https://control.msg91.com/api/v5/otp?template_id=${this.templateId}&mobile=${formattedMobile}&otp=${code}&sender=${this.senderId}`;
 
-      this.logger.log(`[MSG91] Sending OTP to ${formattedMobile}, template: ${this.templateId}`);
+      this.logger.log(`[MSG91] Sending OTP to ${formattedMobile}, template: ${this.templateId}, sender: ${this.senderId}`);
 
       const response = await fetch(url, {
         method: 'POST',
