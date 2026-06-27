@@ -43,7 +43,7 @@ export class AppController {
       });
       let moneySaved = 0;
       matchedInterests.forEach(i => {
-        const price = i.offer?.price || 1000;
+        const price = i.offer?.offer_price || 1000;
         moneySaved += price * 0.5;
       });
 
