@@ -1,10 +1,14 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationService } from '../common/services/notification.service';
 import { OfferStatus, InterestStatus, VerificationStatus, SubscriptionStatus } from '@prisma/client';
 
 @Injectable()
 export class DashboardService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private notificationService: NotificationService
+  ) {}
 
   // ==========================================
   // BUSINESS DASHBOARD METRICS
@@ -115,10 +119,23 @@ export class DashboardService {
       throw new NotFoundException('Business owner not found');
     }
 
-    return this.prisma.business.update({
+    const updated = await this.prisma.business.update({
       where: { id: businessId },
       data: { verification_status: status as VerificationStatus },
     });
+
+    // Notify business owner about onboarding status change
+    const isApproved = status === 'APPROVED' || status === 'VERIFIED';
+    await this.notificationService.sendNotification(
+      businessId,
+      isApproved ? 'Store Onboarding Approved!' : 'Store Onboarding Updated',
+      isApproved
+        ? `Congratulations! Your store onboarding request for "${updated.business_name}" was APPROVED by the administrator. You can now post live BOGO and Group deals!`
+        : `Your store onboarding status has been updated to: ${status}.`,
+      'ONBOARDING_STATUS'
+    ).catch(() => {});
+
+    return updated;
   }
 
   // List businesses

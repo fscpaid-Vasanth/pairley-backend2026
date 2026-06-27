@@ -60,4 +60,12 @@ export class NotificationModuleService {
 
     return { success: true, message: 'Notification deleted successfully' };
   }
+
+  async registerPushToken(userId: string, token: string, platform: string) {
+    return this.prisma.pushToken.upsert({
+      where: { token },
+      update: { user_id: userId, platform },
+      create: { token, user_id: userId, platform },
+    });
+  }
 }

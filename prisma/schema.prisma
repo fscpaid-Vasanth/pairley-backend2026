@@ -274,3 +274,13 @@ model Lead {
   @@map("leads")
 }
 
+model PushToken {
+  id         String   @id @default(uuid())
+  user_id    String
+  token      String   @unique
+  platform   String // 'web', 'android', 'ios'
+  created_at DateTime @default(now())
+
+  @@map("push_tokens")
+}
+

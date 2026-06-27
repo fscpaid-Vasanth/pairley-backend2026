@@ -9,6 +9,7 @@ import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service';
 import { OtpService } from '../common/services/otp.service';
 import { StorageService } from '../common/services/storage.service';
+import { NotificationService } from '../common/services/notification.service';
 import { VerificationStatus, SubscriptionStatus } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
@@ -19,6 +20,7 @@ export class AuthService implements OnModuleInit {
     private jwtService: JwtService,
     private otpService: OtpService,
     private storageService: StorageService,
+    private notificationService: NotificationService,
   ) {}
 
   async onModuleInit() {
@@ -224,6 +226,20 @@ export class AuthService implements OnModuleInit {
         data: { subscription_id: subscription.id },
       });
 
+      // Notify all admins of new merchant onboarding registration
+      this.prisma.admin.findMany({ select: { id: true } })
+        .then(admins => {
+          admins.forEach(admin => {
+            this.notificationService.sendNotification(
+              admin.id,
+              'New Merchant Registered',
+              `Merchant "${business.business_name}" has registered and is awaiting onboarding approval.`,
+              'MERCHANT_ONBOARDING'
+            ).catch(() => {});
+          });
+        })
+        .catch(() => {});
+
       const token = this.generateToken(
         updatedBusiness.id,
         updatedBusiness.mobile,
@@ -395,6 +411,20 @@ export class AuthService implements OnModuleInit {
         where: { id: business.id },
         data: { subscription_id: subscription.id },
       });
+
+      // Notify all admins of new merchant onboarding registration
+      this.prisma.admin.findMany({ select: { id: true } })
+        .then(admins => {
+          admins.forEach(admin => {
+            this.notificationService.sendNotification(
+              admin.id,
+              'New Merchant Registered',
+              `Merchant "${business.business_name}" has registered and is awaiting onboarding approval.`,
+              'MERCHANT_ONBOARDING'
+            ).catch(() => {});
+          });
+        })
+        .catch(() => {});
 
       const token = this.generateToken(
         updatedBusiness.id,

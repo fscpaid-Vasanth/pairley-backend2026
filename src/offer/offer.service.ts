@@ -37,7 +37,7 @@ export class OfferService {
     }
 
     // 3. Create the offer
-    return this.prisma.offer.create({
+    const offer = await this.prisma.offer.create({
       data: {
         business_id: businessId,
         title: data.title,
@@ -56,6 +56,22 @@ export class OfferService {
         status: OfferStatus.ACTIVE, // Published directly as active for validated business
       },
     });
+
+    // Asynchronously notify all customers of the new deal
+    this.prisma.customer.findMany({ select: { id: true } })
+      .then(customers => {
+        customers.forEach(customer => {
+          this.notificationService.sendNotification(
+            customer.id,
+            'New BOGO Split Offer!',
+            `${business.business_name} posted: "${offer.title}". Tap to view and split the cost!`,
+            'NEW_DEAL'
+          ).catch(err => {});
+        });
+      })
+      .catch(err => {});
+
+    return offer;
   }
 
   async updateOffer(businessId: string, offerId: string, data: any) {
@@ -255,6 +271,17 @@ export class OfferService {
       `A new customer joined your offer: "${updatedOffer.title}"!\nName: ${customerName}\nContact: ${customerMobile}\nCity: ${customerCity}\nTotal joined: ${updatedOffer.joined_people}`,
       'Partner Joined'
     );
+
+    // Notify other customers in the co-buy match cohort
+    const otherInterests = updatedOffer.interests.filter((i) => i.customer_id !== customerId);
+    for (const other of otherInterests) {
+      await this.notificationService.sendNotification(
+        other.customer_id,
+        'Co-buyer Joined BOGO Match!',
+        `A new partner (${customerName}) joined your BOGO split for "${updatedOffer.title}". Coordination chat is now open!`,
+        'PARTNER_JOINED'
+      );
+    }
 
     // Send immediate SMS alert to shop owner's notification mobiles (up to 3)
     const interestSmsMsg = `Pairley Interest Alert! Customer ${customerName} (${customerMobile}) from ${customerCity} showed interest in your deal "${updatedOffer.title}".`;
