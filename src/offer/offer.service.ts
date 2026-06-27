@@ -506,6 +506,38 @@ export class OfferService {
       }
     });
 
+    // Automatically create corresponding OfferInterest to register them in the group/pair buy lists
+    const existingInterest = await this.prisma.offerInterest.findUnique({
+      where: {
+        offer_id_customer_id: {
+          offer_id: offerId,
+          customer_id: customerId,
+        },
+      },
+    });
+
+    if (!existingInterest) {
+      await this.prisma.offerInterest.create({
+        data: {
+          offer_id: offerId,
+          customer_id: customerId,
+          status: InterestStatus.INTERESTED,
+        },
+      });
+
+      // Update offer joined_people count based on actual unique record count in DB
+      const actualCount = await this.prisma.offerInterest.count({
+        where: { offer_id: offerId }
+      });
+
+      await this.prisma.offer.update({
+        where: { id: offerId },
+        data: {
+          joined_people: actualCount,
+        },
+      });
+    }
+
     // Collate target numbers: offer's whatsapp_number, business notification_mobiles, and business mobile
     const mobiles: string[] = [];
     if (offer.whatsapp_number) {
