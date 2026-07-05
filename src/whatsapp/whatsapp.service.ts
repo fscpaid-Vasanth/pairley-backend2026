@@ -154,9 +154,12 @@ export class WhatsappService {
     phoneNumberId: string,
     text: string,
   ): Promise<void> {
-    const token = this.configService.get<string>('WHATSAPP_ACCESS_TOKEN');
+    // Use API token (app-level) first, then access token as fallback
+    const token =
+      this.configService.get<string>('WHATSAPP_API_TOKEN') ||
+      this.configService.get<string>('WHATSAPP_ACCESS_TOKEN');
     if (!token) {
-      this.logger.warn('WHATSAPP_ACCESS_TOKEN not configured — skipping send');
+      this.logger.warn('No WhatsApp token configured — skipping send');
       return;
     }
 
@@ -201,9 +204,11 @@ export class WhatsappService {
     languageCode: string = 'en',
     components: any[] = [],
   ): Promise<void> {
-    const token = this.configService.get<string>('WHATSAPP_ACCESS_TOKEN');
+    const token =
+      this.configService.get<string>('WHATSAPP_API_TOKEN') ||
+      this.configService.get<string>('WHATSAPP_ACCESS_TOKEN');
     if (!token) {
-      this.logger.warn('WHATSAPP_ACCESS_TOKEN not configured — skipping send');
+      this.logger.warn('No WhatsApp token configured — skipping send');
       return;
     }
 
