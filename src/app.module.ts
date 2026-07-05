@@ -13,6 +13,7 @@ import { PaymentModule } from './payment/payment.module';
 import { NotificationModule } from './notification/notification.module';
 import { SupportModule } from './support/support.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { WhatsappModule } from './whatsapp/whatsapp.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
     NotificationModule,
     SupportModule,
     DashboardModule,
+    WhatsappModule,
   ],
   controllers: [AppController],
   providers: [AppService],
