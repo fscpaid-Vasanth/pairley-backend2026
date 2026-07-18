@@ -12,9 +12,10 @@ export class JwtAuthGuard implements CanActivate {
       throw new UnauthorizedException('Missing or invalid token format');
     }
     try {
-      const payload = await this.jwtService.verifyAsync(token, {
-        secret: process.env.JWT_SECRET || 'pairley_super_secret_jwt_key_2026',
-      });
+      // No secret override here — uses the same JwtService instance configured
+      // once in AuthModule (which fails startup if JWT_SECRET is unset), instead
+      // of independently re-deriving a secret with its own hardcoded fallback.
+      const payload = await this.jwtService.verifyAsync(token);
       request.user = payload;
     } catch (e) {
       throw new UnauthorizedException('Invalid or expired token');

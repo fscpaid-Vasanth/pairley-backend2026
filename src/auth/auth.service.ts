@@ -10,7 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { OtpService } from '../common/services/otp.service';
 import { StorageService } from '../common/services/storage.service';
 import { NotificationService } from '../common/services/notification.service';
-import { VerificationStatus, SubscriptionStatus } from '@prisma/client';
+import { VerificationStatus, SubscriptionStatus, BusinessStatus, Source } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 @Injectable()
@@ -65,32 +65,22 @@ export class AuthService implements OnModuleInit {
   }
 
   async verifyOtp(mobile: string, code: string) {
-    let isVerified = false;
-    const cleanMobile = mobile.replace(/\D/g, '').slice(-10);
-    const isTestNumber = ['9384092380', '9962045143', '9827780578', '9876543210'].includes(cleanMobile);
+    // Only a real, unexpired OTP issued via sendOtp() is accepted — no
+    // hardcoded or test-number bypass. In mock mode (USE_MOCK_OTP=true) the
+    // random code is logged server-side by OtpService.sendOtp() instead of
+    // being sent via SMS, but it must still be entered correctly here.
+    const record = await this.prisma.otpVerification.findFirst({
+      where: { mobile, code },
+      orderBy: { created_at: 'desc' },
+    });
 
-    if (code === '123456' || code === '1234' ||
-        (this.otpService.useMock && (code === '1234' || code === '123456')) ||
-        (isTestNumber && (code === '1234' || code === '123456'))) {
-      isVerified = true;
-    } else {
-      const record = await this.prisma.otpVerification.findFirst({
-        where: { mobile, code },
-        orderBy: { created_at: 'desc' },
-      });
-
-      if (record) {
-        if (new Date() > record.expires_at) {
-          throw new BadRequestException('OTP code has expired');
-        }
-        isVerified = true;
-        await this.prisma.otpVerification.deleteMany({ where: { mobile } });
-      }
-    }
-
-    if (!isVerified) {
+    if (!record) {
       throw new BadRequestException('Invalid OTP code');
     }
+    if (new Date() > record.expires_at) {
+      throw new BadRequestException('OTP code has expired');
+    }
+    await this.prisma.otpVerification.deleteMany({ where: { mobile } });
 
     // Check if customer or business owner exists with this mobile
     const customer = await this.prisma.customer.findUnique({
@@ -169,6 +159,12 @@ export class AuthService implements OnModuleInit {
       );
       return { token, user: customer, role: 'Customer' };
     } else if (role === 'Business') {
+      // Normal merchant registration requires only mobile (already OTP-verified
+      // before this call), and business_name — everything else is optional.
+      if (!extra.business_name?.trim()) {
+        throw new BadRequestException('Business name is required');
+      }
+
       const existingBusiness = await this.prisma.business.findUnique({
         where: { mobile },
       });
@@ -185,11 +181,11 @@ export class AuthService implements OnModuleInit {
       const business = await this.prisma.business.create({
         data: {
           owner_name: name,
-          business_name: extra.business_name || `${name}'s Shop`,
+          business_name: extra.business_name,
           business_type: extra.business_type || 'Retail',
           category: extra.category || 'General',
           mobile,
-          email: normalizedEmail || '',
+          email: normalizedEmail,
           password_hash: passwordHash,
           address: extra.address || '',
           city: extra.city || '',
@@ -201,6 +197,11 @@ export class AuthService implements OnModuleInit {
           shop_photo: extra.shop_photo || null,
           mall_name: extra.mall_name || null,
           verification_status: VerificationStatus.PENDING,
+          // Self-registered via OTP/password — a real owner from creation,
+          // never UNCLAIMED (that state is reserved for future AI-imported
+          // businesses that have no owner yet).
+          business_status: BusinessStatus.CLAIMED,
+          source: Source.MANUAL,
         },
       });
 
@@ -374,7 +375,7 @@ export class AuthService implements OnModuleInit {
           business_type: extra.business_type,
           category: extra.category || 'General',
           mobile,
-          email: email || '',
+          email: email?.trim().toLowerCase() || null,
           address: extra.address || '',
           city: extra.city,
           state: extra.state,
@@ -387,6 +388,10 @@ export class AuthService implements OnModuleInit {
           gst_number: (extra.gst_number && extra.gst_number.trim()) ? extra.gst_number : null,
           pan_number: (extra.pan_number && extra.pan_number.trim()) ? extra.pan_number : null,
           mall_name: extra.mall_name || null,
+          // Google sign-in proves real ownership immediately, same as
+          // password/OTP registration — never UNCLAIMED.
+          business_status: BusinessStatus.CLAIMED,
+          source: Source.MANUAL,
         },
       });
 
@@ -537,7 +542,8 @@ export class AuthService implements OnModuleInit {
   }
 
   async updateProfile(userId: string, role: string, updates: any) {
-    // Filter out restricted fields
+    // Filter out restricted fields — business_status/source/created_by_ai/
+    // claimed_at/claimed_by are admin- or claim-flow-only, never self-editable.
     const {
       id,
       mobile,
@@ -546,6 +552,11 @@ export class AuthService implements OnModuleInit {
       verification_status,
       subscription_id,
       password_hash,
+      business_status,
+      source,
+      created_by_ai,
+      claimed_at,
+      claimed_by,
       ...validUpdates
     } = updates;
 

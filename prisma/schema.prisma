@@ -2,7 +2,6 @@ datasource db {
   provider = "postgresql"
 }
 
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -55,6 +54,33 @@ enum SupportStatus {
   CLOSED
 }
 
+// Claim/ownership lifecycle for a Business record — orthogonal to
+// VerificationStatus (which tracks admin KYC approval). A normal, self-
+// registered merchant is CLAIMED from creation (they proved phone/Google
+// ownership at signup). UNCLAIMED is reserved for future AI-imported
+// businesses (Pairley 2.0) that exist with no owner yet.
+enum BusinessStatus {
+  UNCLAIMED
+  CLAIMED
+  VERIFIED
+  SUSPENDED
+  REMOVED
+}
+
+// How a Business or Offer record originated. MANUAL covers today's
+// self-service signup/offer-creation flows; the rest are reserved for
+// Pairley 2.0's AI discovery pipeline and are not populated by any code yet.
+enum Source {
+  MANUAL
+  WEBSITE
+  INSTAGRAM
+  FACEBOOK
+  GOOGLE
+  PDF
+  POSTER
+  ADMIN
+}
+
 model Customer {
   id                  String             @id @default(uuid())
   name                String
@@ -74,42 +100,47 @@ model Customer {
   created_at          DateTime           @default(now())
   updated_at          DateTime           @updatedAt
 
-  interests           OfferInterest[]
-  saved_offers        SavedOffer[]
-  ratings             Rating[]
+  interests    OfferInterest[]
+  saved_offers SavedOffer[]
+  ratings      Rating[]
 
   @@map("customers")
 }
 
 model Business {
-  id                  String             @id @default(uuid())
-  owner_name          String
-  business_name       String
-  business_type       String
-  category            String
-  mobile              String             @unique
-  email               String             @unique
-  password_hash       String? // Optional password for portal login
-  address             String
-  city                String
-  state               String
-  pincode             String
-  mall_name           String?
-  aadhaar_number      String?
-  aadhaar_photo       String?
-  pan_number          String?
-  pan_photo           String?
-  gst_number          String?
-  shop_photo          String?
-  verification_status VerificationStatus @default(PENDING)
-  subscription_id     String?
+  id                   String             @id @default(uuid())
+  owner_name           String
+  business_name        String
+  business_type        String
+  category             String
+  mobile               String             @unique
+  email                String?            @unique // nullable: AI-imported businesses (Pairley 2.0) may have no known email
+  password_hash        String? // Optional password for portal login
+  address              String
+  city                 String
+  state                String
+  pincode              String
+  mall_name            String?
+  aadhaar_number       String?
+  aadhaar_photo        String?
+  pan_number           String?
+  pan_photo            String?
+  gst_number           String?
+  shop_photo           String?
+  verification_status  VerificationStatus @default(PENDING)
+  business_status      BusinessStatus     @default(UNCLAIMED) // explicitly set to CLAIMED at registration in code — see auth.service.ts
+  source               Source             @default(MANUAL)
+  created_by_ai        Boolean            @default(false)
+  claimed_at           DateTime? // set only when an UNCLAIMED (AI-imported) business is claimed — null for normal signups
+  claimed_by           String?
+  subscription_id      String?
   notification_mobiles String?
-  created_at          DateTime           @default(now())
-  updated_at          DateTime           @updatedAt
+  created_at           DateTime           @default(now())
+  updated_at           DateTime           @updatedAt
 
-  subscriptions       Subscription[]
-  offers              Offer[]
-  ratings             Rating[]
+  subscriptions Subscription[]
+  offers        Offer[]
+  ratings       Rating[]
 
   @@map("businesses")
 }
@@ -125,35 +156,36 @@ model Subscription {
   payment_reference String?
   created_at        DateTime           @default(now())
 
-  business          Business           @relation(fields: [business_id], references: [id], onDelete: Cascade)
+  business Business @relation(fields: [business_id], references: [id], onDelete: Cascade)
 
   @@map("subscriptions")
 }
 
 model Offer {
-  id              String         @id @default(uuid())
-  business_id     String
-  title           String
-  description     String
-  offer_type      OfferType
-  category        String
-  original_price  Float
-  offer_price     Float
-  required_people Int
-  joined_people   Int            @default(0)
-  start_date      DateTime
-  end_date        DateTime
-  offer_image     String?
-  facility_images String[]       @default([])
+  id               String      @id @default(uuid())
+  business_id      String
+  title            String
+  description      String
+  offer_type       OfferType
+  category         String
+  original_price   Float
+  offer_price      Float
+  required_people  Int
+  joined_people    Int         @default(0)
+  start_date       DateTime
+  end_date         DateTime
+  offer_image      String?
+  facility_images  String[]    @default([])
   facility_details String?
-  status          OfferStatus    @default(DRAFT)
-  whatsapp_number String?
-  created_at      DateTime       @default(now())
-  updated_at      DateTime       @updatedAt
+  status           OfferStatus @default(DRAFT)
+  source           Source      @default(MANUAL) // schema prep for Pairley 2.0 AI import; not yet populated by any offer-creation code
+  whatsapp_number  String?
+  created_at       DateTime    @default(now())
+  updated_at       DateTime    @updatedAt
 
-  business        Business       @relation(fields: [business_id], references: [id], onDelete: Cascade)
-  interests       OfferInterest[]
-  saved_by        SavedOffer[]
+  business  Business        @relation(fields: [business_id], references: [id], onDelete: Cascade)
+  interests OfferInterest[]
+  saved_by  SavedOffer[]
 
   @@map("offers")
 }
@@ -165,8 +197,8 @@ model OfferInterest {
   status      InterestStatus @default(INTERESTED)
   created_at  DateTime       @default(now())
 
-  offer       Offer          @relation(fields: [offer_id], references: [id], onDelete: Cascade)
-  customer    Customer       @relation(fields: [customer_id], references: [id], onDelete: Cascade)
+  offer    Offer    @relation(fields: [offer_id], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customer_id], references: [id], onDelete: Cascade)
 
   @@unique([offer_id, customer_id])
   @@map("offer_interests")
@@ -178,8 +210,8 @@ model SavedOffer {
   offer_id    String
   created_at  DateTime @default(now())
 
-  customer    Customer @relation(fields: [customer_id], references: [id], onDelete: Cascade)
-  offer       Offer    @relation(fields: [offer_id], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customer_id], references: [id], onDelete: Cascade)
+  offer    Offer    @relation(fields: [offer_id], references: [id], onDelete: Cascade)
 
   @@unique([customer_id, offer_id])
   @@map("saved_offers")
@@ -205,8 +237,8 @@ model Rating {
   review      String?
   created_at  DateTime @default(now())
 
-  customer    Customer @relation(fields: [customer_id], references: [id], onDelete: Cascade)
-  business    Business @relation(fields: [business_id], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customer_id], references: [id], onDelete: Cascade)
+  business Business @relation(fields: [business_id], references: [id], onDelete: Cascade)
 
   @@unique([customer_id, business_id])
   @@map("ratings")
@@ -283,4 +315,3 @@ model PushToken {
 
   @@map("push_tokens")
 }
-

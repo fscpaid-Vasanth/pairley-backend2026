@@ -10,12 +10,22 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        secret: config.get<string>('JWT_SECRET') || 'pairley_super_secret_jwt_key_2026',
-        signOptions: {
-          expiresIn: (config.get<string>('JWT_EXPIRY') || '7d') as any,
-        },
-      }),
+      useFactory: (config: ConfigService) => {
+        const secret = config.get<string>('JWT_SECRET');
+        if (!secret) {
+          // No silent fallback to a hardcoded secret — an unset JWT_SECRET
+          // must fail startup loudly, not issue guessable-secret tokens.
+          throw new Error(
+            'JWT_SECRET environment variable is required and was not set.',
+          );
+        }
+        return {
+          secret,
+          signOptions: {
+            expiresIn: (config.get<string>('JWT_EXPIRY') || '7d') as any,
+          },
+        };
+      },
     }),
   ],
   controllers: [AuthController],

@@ -171,6 +171,9 @@ export class OtpService {
   }
 
   generateOtp(): string {
-    return '123456';
+    // 6-digit code, uniformly random across 000000-999999.
+    return Math.floor(Math.random() * 1_000_000)
+      .toString()
+      .padStart(6, '0');
   }
 }

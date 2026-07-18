@@ -18,8 +18,11 @@ import {
   IsString,
   IsEmail,
   IsOptional,
+  IsIn,
   Length,
 } from 'class-validator';
+
+const REGISTRATION_ROLES = ['Customer', 'Business'] as const;
 
 class SendOtpDto {
   @IsString()
@@ -54,8 +57,7 @@ class RegisterDto {
   @IsOptional()
   email?: string;
 
-  @IsString()
-  @IsNotEmpty()
+  @IsIn(REGISTRATION_ROLES)
   role: 'Customer' | 'Business';
 
   // Extra optional customer fields
@@ -141,8 +143,7 @@ class GoogleAuthDto {
   @IsNotEmpty()
   email: string;
 
-  @IsString()
-  @IsNotEmpty()
+  @IsIn(REGISTRATION_ROLES)
   role: 'Customer' | 'Business';
 
   @IsString()
