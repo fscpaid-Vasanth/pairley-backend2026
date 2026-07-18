@@ -98,5 +98,53 @@ export class StorageService {
       return '';
     }
   }
+
+  async getFile(key: string): Promise<{ buffer: Buffer; contentType: string }> {
+    if (this.useMock) {
+      const filePath = path.join(this.uploadDir, key);
+      if (!fs.existsSync(filePath)) {
+        throw new Error('File not found');
+      }
+      const buffer = fs.readFileSync(filePath);
+      const ext = path.extname(key).toLowerCase();
+      let contentType = 'image/png';
+      if (ext === '.jpg' || ext === '.jpeg') contentType = 'image/jpeg';
+      else if (ext === '.pdf') contentType = 'application/pdf';
+      return { buffer, contentType };
+    }
+
+    try {
+      const { S3Client, GetObjectCommand } = await import('@aws-sdk/client-s3');
+      const s3 = new S3Client({
+        region: this.region,
+        credentials: {
+          accessKeyId: this.accessKeyId,
+          secretAccessKey: this.secretAccessKey,
+        },
+      });
+
+      const response = await s3.send(new GetObjectCommand({
+        Bucket: this.bucketName,
+        Key: key,
+      }));
+
+      const streamToBuffer = (stream: any): Promise<Buffer> =>
+        new Promise((resolve, reject) => {
+          const chunks: any[] = [];
+          stream.on('data', (chunk) => chunks.push(chunk));
+          stream.on('error', reject);
+          stream.on('end', () => resolve(Buffer.concat(chunks)));
+        });
+
+      const buffer = await streamToBuffer(response.Body);
+      return {
+        buffer,
+        contentType: response.ContentType || 'image/png',
+      };
+    } catch (error) {
+      this.logger.error(`Failed to get file from S3: ${error.message}`);
+      throw new Error(`S3 fetch failed: ${error.message}`);
+    }
+  }
 }
 

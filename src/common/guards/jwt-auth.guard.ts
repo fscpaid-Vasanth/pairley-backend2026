@@ -24,6 +24,12 @@ export class JwtAuthGuard implements CanActivate {
 
   private extractTokenFromHeader(request: any): string | undefined {
     const [type, token] = request.headers.authorization?.split(' ') ?? [];
-    return type === 'Bearer' ? token : undefined;
+    if (type === 'Bearer' && token) {
+      return token;
+    }
+    // Fallback for endpoints consumed as raw URLs (e.g. <img src>, <a href> document
+    // previews) where the browser can't attach an Authorization header. Only used
+    // when no header is present, so header-based callers are unaffected.
+    return request.query?.token || undefined;
   }
 }
