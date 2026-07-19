@@ -29,6 +29,39 @@ const LEGACY_MATCHING_OFFER_TYPES = new Set([
   'PACKAGE_DEAL',
 ]);
 
+// Offer scalar fields safe to return from the public/customer-facing read
+// paths (listOffers, getDetails — both unauthenticated endpoints). Excludes
+// `source` and every Pairley 2.0 provenance field (confidence_score,
+// imported_at, review_required, original_import_url, original_import_source,
+// merchant_verified, is_pairley_exclusive, original_poster,
+// generated_offer_card) — customers must never see whether/how an offer was
+// imported, only the three approved badges once that UI exists.
+const PUBLIC_OFFER_FIELDS = {
+  id: true,
+  business_id: true,
+  title: true,
+  description: true,
+  offer_type: true,
+  category: true,
+  original_price: true,
+  offer_price: true,
+  required_people: true,
+  joined_people: true,
+  start_date: true,
+  end_date: true,
+  status: true,
+  whatsapp_number: true,
+  offer_image: true,
+  facility_images: true,
+  facility_details: true,
+  cover_image: true,
+  gallery_images: true,
+  geo_lat: true,
+  geo_lng: true,
+  created_at: true,
+  updated_at: true,
+} as const;
+
 @Injectable()
 export class OfferService {
   constructor(
@@ -377,7 +410,8 @@ export class OfferService {
 
     return this.prisma.offer.findMany({
       where: whereClause,
-      include: {
+      select: {
+        ...PUBLIC_OFFER_FIELDS,
         business: {
           select: {
             business_name: true,
@@ -394,7 +428,8 @@ export class OfferService {
   async getDetails(id: string) {
     const offer = await this.prisma.offer.findUnique({
       where: { id },
-      include: {
+      select: {
+        ...PUBLIC_OFFER_FIELDS,
         business: {
           select: {
             id: true,
