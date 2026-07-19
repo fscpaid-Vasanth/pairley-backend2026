@@ -1,22 +1,46 @@
-import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationService } from '../common/services/notification.service';
 import { OtpService } from '../common/services/otp.service';
-import { OfferType, OfferStatus, InterestStatus, SubscriptionStatus, VerificationStatus } from '@prisma/client';
+import {
+  OfferType,
+  OfferStatus,
+  InterestStatus,
+  SubscriptionStatus,
+  VerificationStatus,
+} from '@prisma/client';
+
+// Legacy pair/group matching mechanics — kept working exactly as before.
+// Everything else (STANDARD + the new mechanics) uses the simplified
+// Show Interest -> Lead -> Merchant Dashboard flow with no OfferInterest/
+// capacity tracking/chat.
+const LEGACY_MATCHING_OFFER_TYPES = new Set([
+  'BOGO',
+  'BOGT',
+  'GROUP_DISCOUNT',
+  'BULK_PURCHASE',
+  'MEMBERSHIP_CAMPAIGN',
+  'PACKAGE_DEAL',
+]);
 
 @Injectable()
 export class OfferService {
   constructor(
     private prisma: PrismaService,
     private notificationService: NotificationService,
-    private otpService: OtpService
+    private otpService: OtpService,
   ) {}
 
   async createOffer(businessId: string, data: any) {
     // 1. Verify business is verified
     const business = await this.prisma.business.findUnique({
       where: { id: businessId },
-      include: { subscriptions: true }
+      include: { subscriptions: true },
     });
 
     if (!business) {
@@ -24,19 +48,33 @@ export class OfferService {
     }
 
     if (business.verification_status !== VerificationStatus.APPROVED) {
-      throw new ForbiddenException('Your business account has not been approved by the administrator yet.');
+      throw new ForbiddenException(
+        'Your business account has not been approved by the administrator yet.',
+      );
     }
 
     // 2. Verify business has active subscription
     const activeSub = business.subscriptions.find(
-      (sub) => sub.status === SubscriptionStatus.ACTIVE && new Date() < sub.expiry_date
+      (sub) =>
+        sub.status === SubscriptionStatus.ACTIVE &&
+        new Date() < sub.expiry_date,
     );
 
     if (!activeSub) {
-      throw new ForbiddenException('An active subscription is required to publish offers.');
+      throw new ForbiddenException(
+        'An active subscription is required to publish offers.',
+      );
     }
 
-    // 3. Create the offer
+    // 3. Resolve effective location — offer override, else inherit from the
+    // business (Module 2). No geolocation logic duplicated here.
+    const geoLat = data.geo_lat ?? business.geo_lat ?? null;
+    const geoLng = data.geo_lng ?? business.geo_lng ?? null;
+
+    // 4. Create the offer. cover_image/gallery_images (Module 3 media model)
+    // accept the legacy offer_image/facility_images field names as a fallback
+    // input source for backward compatibility, but always write to the new
+    // columns only — offer_image/facility_images are not written by new code.
     const offer = await this.prisma.offer.create({
       data: {
         business_id: businessId,
@@ -49,33 +87,51 @@ export class OfferService {
         required_people: parseInt(data.required_people),
         start_date: new Date(data.start_date),
         end_date: new Date(data.end_date),
-        offer_image: data.offer_image || null,
-        facility_images: data.facility_images || [],
+        cover_image: data.cover_image || data.offer_image || null,
+        gallery_images: data.gallery_images || data.facility_images || [],
         facility_details: data.facility_details || null,
         whatsapp_number: data.whatsapp_number || null,
+        geo_lat: geoLat,
+        geo_lng: geoLng,
         status: OfferStatus.ACTIVE, // Published directly as active for validated business
       },
     });
 
+    // 5. Version history: initial snapshot
+    await this.prisma.offerVersion.create({
+      data: {
+        offer_id: offer.id,
+        version_no: 1,
+        snapshot: offer as any,
+        changed_by: businessId,
+        change_type: 'CREATED',
+      },
+    });
+
     // Asynchronously notify all customers of the new deal
-    this.prisma.customer.findMany({ select: { id: true } })
-      .then(customers => {
-        customers.forEach(customer => {
-          this.notificationService.sendNotification(
-            customer.id,
-            'New BOGO Split Offer!',
-            `${business.business_name} posted: "${offer.title}". Tap to view and split the cost!`,
-            'NEW_DEAL'
-          ).catch(err => {});
+    this.prisma.customer
+      .findMany({ select: { id: true } })
+      .then((customers) => {
+        customers.forEach((customer) => {
+          this.notificationService
+            .sendNotification(
+              customer.id,
+              'New Offer Posted!',
+              `${business.business_name} posted: "${offer.title}". Tap to view!`,
+              'NEW_DEAL',
+            )
+            .catch((err) => {});
         });
       })
-      .catch(err => {});
+      .catch((err) => {});
 
     return offer;
   }
 
   async updateOffer(businessId: string, offerId: string, data: any) {
-    const offer = await this.prisma.offer.findUnique({ where: { id: offerId } });
+    const offer = await this.prisma.offer.findUnique({
+      where: { id: offerId },
+    });
     if (!offer) {
       throw new NotFoundException('Offer not found');
     }
@@ -84,15 +140,52 @@ export class OfferService {
       throw new ForbiddenException('You do not own this offer');
     }
 
-    const { id, business_id, created_at, updated_at, ...updates } = data;
+    // Defense in depth on top of UpdateOfferDto's whitelist: status changes go
+    // through updateOfferStatus() instead, and provenance/AI/admin fields are
+    // never merchant-editable regardless of what's in the request body.
+    const {
+      id,
+      business_id,
+      created_at,
+      updated_at,
+      status,
+      source,
+      confidence_score,
+      imported_at,
+      review_required,
+      original_import_url,
+      original_import_source,
+      merchant_verified,
+      is_pairley_exclusive,
+      offer_image,
+      facility_images,
+      ...updates
+    } = data;
 
-    if (updates.original_price) updates.original_price = parseFloat(updates.original_price);
-    if (updates.offer_price) updates.offer_price = parseFloat(updates.offer_price);
-    if (updates.required_people) updates.required_people = parseInt(updates.required_people);
+    if (updates.original_price)
+      updates.original_price = parseFloat(updates.original_price);
+    if (updates.offer_price)
+      updates.offer_price = parseFloat(updates.offer_price);
+    if (updates.required_people)
+      updates.required_people = parseInt(updates.required_people);
     if (updates.start_date) updates.start_date = new Date(updates.start_date);
     if (updates.end_date) updates.end_date = new Date(updates.end_date);
-    if (updates.offer_type) updates.offer_type = updates.offer_type as OfferType;
-    if (updates.status) updates.status = updates.status as OfferStatus;
+    if (updates.offer_type)
+      updates.offer_type = updates.offer_type as OfferType;
+
+    // Version history: snapshot the offer as it was immediately before this edit
+    const existingVersionCount = await this.prisma.offerVersion.count({
+      where: { offer_id: offerId },
+    });
+    await this.prisma.offerVersion.create({
+      data: {
+        offer_id: offerId,
+        version_no: existingVersionCount + 1,
+        snapshot: offer as any,
+        changed_by: businessId,
+        change_type: 'MERCHANT_EDIT',
+      },
+    });
 
     return this.prisma.offer.update({
       where: { id: offerId },
@@ -100,8 +193,40 @@ export class OfferService {
     });
   }
 
+  async updateOfferStatus(businessId: string, offerId: string, status: string) {
+    const offer = await this.prisma.offer.findUnique({
+      where: { id: offerId },
+    });
+    if (!offer) {
+      throw new NotFoundException('Offer not found');
+    }
+    if (offer.business_id !== businessId) {
+      throw new ForbiddenException('You do not own this offer');
+    }
+
+    const existingVersionCount = await this.prisma.offerVersion.count({
+      where: { offer_id: offerId },
+    });
+    await this.prisma.offerVersion.create({
+      data: {
+        offer_id: offerId,
+        version_no: existingVersionCount + 1,
+        snapshot: offer as any,
+        changed_by: businessId,
+        change_type: 'STATUS_CHANGE',
+      },
+    });
+
+    return this.prisma.offer.update({
+      where: { id: offerId },
+      data: { status: status as OfferStatus },
+    });
+  }
+
   async deleteOffer(businessId: string, offerId: string) {
-    const offer = await this.prisma.offer.findUnique({ where: { id: offerId } });
+    const offer = await this.prisma.offer.findUnique({
+      where: { id: offerId },
+    });
     if (!offer) {
       throw new NotFoundException('Offer not found');
     }
@@ -114,7 +239,13 @@ export class OfferService {
     return { success: true, message: 'Offer deleted successfully' };
   }
 
-  async listOffers(filters: { category?: string; businessId?: string; search?: string; status?: string; mall?: string }) {
+  async listOffers(filters: {
+    category?: string;
+    businessId?: string;
+    search?: string;
+    status?: string;
+    mall?: string;
+  }) {
     const whereClause: any = {};
 
     if (filters.category) {
@@ -131,7 +262,7 @@ export class OfferService {
 
     if (filters.mall) {
       whereClause.business = {
-        mall_name: filters.mall
+        mall_name: filters.mall,
       };
     }
 
@@ -229,7 +360,11 @@ export class OfferService {
     });
 
     if (existing) {
-      return { success: true, message: 'Already expressed interest in this offer', interest: existing };
+      return {
+        success: true,
+        message: 'Already expressed interest in this offer',
+        interest: existing,
+      };
     }
 
     // 3. Create interest
@@ -243,7 +378,7 @@ export class OfferService {
 
     // 4. Update offer joined_people count based on actual unique record count in DB
     const actualCount = await this.prisma.offerInterest.count({
-      where: { offer_id: offerId }
+      where: { offer_id: offerId },
     });
 
     const updatedOffer = await this.prisma.offer.update({
@@ -259,7 +394,9 @@ export class OfferService {
       },
     });
 
-    const currentInterest = updatedOffer.interests.find((i) => i.customer_id === customerId);
+    const currentInterest = updatedOffer.interests.find(
+      (i) => i.customer_id === customerId,
+    );
     const customerName = currentInterest?.customer?.name || 'A customer';
     const customerMobile = currentInterest?.customer?.mobile || '';
     const customerCity = currentInterest?.customer?.city || '';
@@ -269,17 +406,19 @@ export class OfferService {
       updatedOffer.business_id,
       'Partner Joined Deal',
       `A new customer joined your offer: "${updatedOffer.title}"!\nName: ${customerName}\nContact: ${customerMobile}\nCity: ${customerCity}\nTotal joined: ${updatedOffer.joined_people}`,
-      'Partner Joined'
+      'Partner Joined',
     );
 
     // Notify other customers in the co-buy match cohort
-    const otherInterests = updatedOffer.interests.filter((i) => i.customer_id !== customerId);
+    const otherInterests = updatedOffer.interests.filter(
+      (i) => i.customer_id !== customerId,
+    );
     for (const other of otherInterests) {
       await this.notificationService.sendNotification(
         other.customer_id,
         'Co-buyer Joined BOGO Match!',
         `A new partner (${customerName}) joined your BOGO split for "${updatedOffer.title}". Coordination chat is now open!`,
-        'PARTNER_JOINED'
+        'PARTNER_JOINED',
       );
     }
 
@@ -321,7 +460,7 @@ export class OfferService {
         updatedOffer.business_id,
         'Offer Target Achieved!',
         `Your offer "${updatedOffer.title}" has reached the required participation of ${updatedOffer.required_people} people. You can now contact the ready buyers.`,
-        'Offer Completed'
+        'Offer Completed',
       );
 
       // Notify all customers who joined (in-app/push + SMS)
@@ -332,22 +471,30 @@ export class OfferService {
             i.customer_id,
             'Group Deal Completed!',
             `The deal for "${updatedOffer.title}" is ready! The business will contact you soon.`,
-            'Offer Completed'
+            'Offer Completed',
           );
         } catch (notifErr) {
-          console.error(`Failed to send match completion in-app notification to customer ${i.customer_id}:`, notifErr);
+          console.error(
+            `Failed to send match completion in-app notification to customer ${i.customer_id}:`,
+            notifErr,
+          );
         }
         if (i.customer.mobile) {
           try {
             await this.otpService.sendSms(i.customer.mobile, customerSmsMsg);
           } catch (smsErr) {
-            console.error(`Failed to send match completion SMS to customer ${i.customer.mobile}:`, smsErr);
+            console.error(
+              `Failed to send match completion SMS to customer ${i.customer.mobile}:`,
+              smsErr,
+            );
           }
         }
       }
 
       // Dispatch details to merchant notification mobile numbers
-      const merchantContacts = (updatedOffer.business.notification_mobiles || '')
+      const merchantContacts = (
+        updatedOffer.business.notification_mobiles || ''
+      )
         .split(',')
         .map((num) => num.trim())
         .filter((num) => /^\d{10}$/.test(num));
@@ -359,21 +506,32 @@ export class OfferService {
 
       if (merchantContacts.length > 0) {
         const buyersList = updatedOffer.interests
-          .map((i, index) => `${index + 1}. ${i.customer.name} (${i.customer.mobile})`)
+          .map(
+            (i, index) =>
+              `${index + 1}. ${i.customer.name} (${i.customer.mobile})`,
+          )
           .join(', ');
         const merchantSmsMsg = `Pairley Match Alert! Offer '${updatedOffer.title}' has matched. Buyers: ${buyersList}.`;
 
-        for (const contact of merchantContacts.slice(0, 3)) { // Limit to up to 3 numbers
+        for (const contact of merchantContacts.slice(0, 3)) {
+          // Limit to up to 3 numbers
           try {
             await this.otpService.sendSms(contact, merchantSmsMsg);
           } catch (smsErr) {
-            console.error(`Failed to send match completion SMS to merchant ${contact}:`, smsErr);
+            console.error(
+              `Failed to send match completion SMS to merchant ${contact}:`,
+              smsErr,
+            );
           }
         }
       }
     }
 
-    return { success: true, message: 'Expressed interest successfully', interest };
+    return {
+      success: true,
+      message: 'Expressed interest successfully',
+      interest,
+    };
   }
 
   async declareReadyToBuy(customerId: string, offerId: string) {
@@ -387,7 +545,9 @@ export class OfferService {
     });
 
     if (!interest) {
-      throw new NotFoundException('You have not expressed interest in this offer yet');
+      throw new NotFoundException(
+        'You have not expressed interest in this offer yet',
+      );
     }
 
     const updatedInterest = await this.prisma.offerInterest.update({
@@ -395,7 +555,11 @@ export class OfferService {
       data: { status: InterestStatus.READY_TO_BUY },
     });
 
-    return { success: true, message: 'Ready to buy status set successfully', interest: updatedInterest };
+    return {
+      success: true,
+      message: 'Ready to buy status set successfully',
+      interest: updatedInterest,
+    };
   }
 
   async getInterestedCustomers(businessId: string) {
@@ -422,7 +586,11 @@ export class OfferService {
     });
   }
 
-  async updateInterestStatus(businessId: string, interestId: string, status: string) {
+  async updateInterestStatus(
+    businessId: string,
+    interestId: string,
+    status: string,
+  ) {
     const interest = await this.prisma.offerInterest.findUnique({
       where: { id: interestId },
       include: { offer: true },
@@ -433,7 +601,9 @@ export class OfferService {
     }
 
     if (interest.offer.business_id !== businessId) {
-      throw new ForbiddenException('You do not own the offer associated with this interest');
+      throw new ForbiddenException(
+        'You do not own the offer associated with this interest',
+      );
     }
 
     const updated = await this.prisma.offerInterest.update({
@@ -455,11 +625,13 @@ export class OfferService {
     });
 
     if (!interest) {
-      throw new BadRequestException('You must show interest in this deal to send messages.');
+      throw new BadRequestException(
+        'You must show interest in this deal to send messages.',
+      );
     }
 
     const customer = await this.prisma.customer.findUnique({
-      where: { id: customerId }
+      where: { id: customerId },
     });
     const senderName = customer?.name || 'Anonymous Buyer';
 
@@ -489,7 +661,7 @@ export class OfferService {
   async createLead(customerId: string, offerId: string) {
     const offer = await this.prisma.offer.findUnique({
       where: { id: offerId },
-      include: { business: true }
+      include: { business: true },
     });
 
     if (!offer) {
@@ -503,17 +675,19 @@ export class OfferService {
         customer_id: customerId,
         offer_id: offerId,
         created_at: {
-          gte: twentyFourHoursAgo
-        }
-      }
+          gte: twentyFourHoursAgo,
+        },
+      },
     });
 
     if (existingLead) {
-      throw new BadRequestException('You have already expressed interest in this deal.');
+      throw new BadRequestException(
+        'You have already expressed interest in this deal.',
+      );
     }
 
     const customer = await this.prisma.customer.findUnique({
-      where: { id: customerId }
+      where: { id: customerId },
     });
 
     if (!customer) {
@@ -529,40 +703,48 @@ export class OfferService {
         offer_name: offer.title,
         shop_id: offer.business_id,
         shop_name: offer.business.business_name,
-        status: 'Interested'
-      }
-    });
-
-    // Automatically create corresponding OfferInterest to register them in the group/pair buy lists
-    const existingInterest = await this.prisma.offerInterest.findUnique({
-      where: {
-        offer_id_customer_id: {
-          offer_id: offerId,
-          customer_id: customerId,
-        },
+        status: 'Interested',
       },
     });
 
-    if (!existingInterest) {
-      await this.prisma.offerInterest.create({
-        data: {
-          offer_id: offerId,
-          customer_id: customerId,
-          status: InterestStatus.INTERESTED,
+    // Legacy pair/group matching mechanics only: also register the customer
+    // in the OfferInterest matching pool (capacity tracking, chat, auto-close
+    // on capacity reached — all handled elsewhere via expressInterest()'s
+    // continuation of this same mechanic). STANDARD and the new mechanics
+    // stop here — Lead alone is the whole "Show Interest" outcome, matching
+    // the simplified Customer -> Show Interest -> Lead -> Merchant Dashboard
+    // flow. No chat, no matching, no waiting.
+    if (LEGACY_MATCHING_OFFER_TYPES.has(offer.offer_type)) {
+      const existingInterest = await this.prisma.offerInterest.findUnique({
+        where: {
+          offer_id_customer_id: {
+            offer_id: offerId,
+            customer_id: customerId,
+          },
         },
       });
 
-      // Update offer joined_people count based on actual unique record count in DB
-      const actualCount = await this.prisma.offerInterest.count({
-        where: { offer_id: offerId }
-      });
+      if (!existingInterest) {
+        await this.prisma.offerInterest.create({
+          data: {
+            offer_id: offerId,
+            customer_id: customerId,
+            status: InterestStatus.INTERESTED,
+          },
+        });
 
-      await this.prisma.offer.update({
-        where: { id: offerId },
-        data: {
-          joined_people: actualCount,
-        },
-      });
+        // Update offer joined_people count based on actual unique record count in DB
+        const actualCount = await this.prisma.offerInterest.count({
+          where: { offer_id: offerId },
+        });
+
+        await this.prisma.offer.update({
+          where: { id: offerId },
+          data: {
+            joined_people: actualCount,
+          },
+        });
+      }
     }
 
     // Collate target numbers: offer's whatsapp_number, business notification_mobiles, and business mobile
@@ -573,8 +755,8 @@ export class OfferService {
     if (offer.business.notification_mobiles) {
       const notifs = offer.business.notification_mobiles
         .split(',')
-        .map(num => num.trim())
-        .filter(num => /^\d{10}$/.test(num));
+        .map((num) => num.trim())
+        .filter((num) => /^\d{10}$/.test(num));
       mobiles.push(...notifs);
     }
     if (mobiles.length === 0 && offer.business.mobile) {
@@ -591,8 +773,7 @@ export class OfferService {
       offerName: offer.title,
       shopName: offer.business.business_name,
       customerName: customer.name,
-      customerMobile: customer.mobile
+      customerMobile: customer.mobile,
     };
   }
 }
-

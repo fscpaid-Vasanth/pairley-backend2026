@@ -176,9 +176,20 @@ export class OfferController {
   async updateOffer(
     @CurrentUser() user: any,
     @Param('id') offerId: string,
-    @Body() body: any,
+    @Body() body: UpdateOfferDto,
   ) {
     return this.offerService.updateOffer(user.sub, offerId, body);
+  }
+
+  @Put(':id/status')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.BUSINESS)
+  async updateOfferStatus(
+    @CurrentUser() user: any,
+    @Param('id') offerId: string,
+    @Body() body: UpdateOfferStatusDto,
+  ) {
+    return this.offerService.updateOfferStatus(user.sub, offerId, body.status);
   }
 
   @Delete('delete/:id')
