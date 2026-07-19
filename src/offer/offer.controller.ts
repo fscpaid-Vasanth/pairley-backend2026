@@ -8,7 +8,11 @@ import {
   Query,
   Param,
   UseGuards,
+  UseInterceptors,
+  UploadedFiles,
+  BadRequestException,
 } from '@nestjs/common';
+import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { OfferService } from './offer.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -190,6 +194,41 @@ export class OfferController {
     @Body() body: UpdateOfferStatusDto,
   ) {
     return this.offerService.updateOfferStatus(user.sub, offerId, body.status);
+  }
+
+  @Post(':id/media')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.BUSINESS)
+  @UseInterceptors(
+    FileFieldsInterceptor([
+      { name: 'cover_image', maxCount: 1 },
+      { name: 'gallery', maxCount: 10 },
+    ]),
+  )
+  async uploadOfferMedia(
+    @CurrentUser() user: any,
+    @Param('id') offerId: string,
+    @UploadedFiles()
+    files: {
+      cover_image?: Express.Multer.File[];
+      gallery?: Express.Multer.File[];
+    },
+  ) {
+    return this.offerService.uploadOfferMedia(user.sub, offerId, files);
+  }
+
+  @Delete(':id/media/gallery')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.BUSINESS)
+  async removeOfferGalleryImage(
+    @CurrentUser() user: any,
+    @Param('id') offerId: string,
+    @Query('url') url: string,
+  ) {
+    if (!url) {
+      throw new BadRequestException('url query parameter is required');
+    }
+    return this.offerService.removeOfferGalleryImage(user.sub, offerId, url);
   }
 
   @Delete('delete/:id')

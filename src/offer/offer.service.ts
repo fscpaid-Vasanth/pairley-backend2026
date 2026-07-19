@@ -7,6 +7,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationService } from '../common/services/notification.service';
 import { OtpService } from '../common/services/otp.service';
+import { StorageService } from '../common/services/storage.service';
 import {
   OfferType,
   OfferStatus,
@@ -34,6 +35,7 @@ export class OfferService {
     private prisma: PrismaService,
     private notificationService: NotificationService,
     private otpService: OtpService,
+    private storageService: StorageService,
   ) {}
 
   async createOffer(businessId: string, data: any) {
@@ -220,6 +222,75 @@ export class OfferService {
     return this.prisma.offer.update({
       where: { id: offerId },
       data: { status: status as OfferStatus },
+    });
+  }
+
+  async uploadOfferMedia(
+    businessId: string,
+    offerId: string,
+    files: {
+      cover_image?: Express.Multer.File[];
+      gallery?: Express.Multer.File[];
+    },
+  ) {
+    const offer = await this.prisma.offer.findUnique({
+      where: { id: offerId },
+    });
+    if (!offer) {
+      throw new NotFoundException('Offer not found');
+    }
+    if (offer.business_id !== businessId) {
+      throw new ForbiddenException('You do not own this offer');
+    }
+
+    const updateData: any = {};
+
+    if (files.cover_image && files.cover_image.length > 0) {
+      updateData.cover_image = await this.storageService.uploadFile(
+        files.cover_image[0],
+        'offers/cover',
+      );
+    }
+
+    if (files.gallery && files.gallery.length > 0) {
+      const uploaded = await Promise.all(
+        files.gallery.map((file) =>
+          this.storageService.uploadFile(file, 'offers/gallery'),
+        ),
+      );
+      // Append rather than replace, so repeated upload calls accumulate images.
+      updateData.gallery_images = [...offer.gallery_images, ...uploaded];
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      throw new BadRequestException('No files provided');
+    }
+
+    return this.prisma.offer.update({
+      where: { id: offerId },
+      data: updateData,
+    });
+  }
+
+  async removeOfferGalleryImage(
+    businessId: string,
+    offerId: string,
+    url: string,
+  ) {
+    const offer = await this.prisma.offer.findUnique({
+      where: { id: offerId },
+    });
+    if (!offer) {
+      throw new NotFoundException('Offer not found');
+    }
+    if (offer.business_id !== businessId) {
+      throw new ForbiddenException('You do not own this offer');
+    }
+    return this.prisma.offer.update({
+      where: { id: offerId },
+      data: {
+        gallery_images: offer.gallery_images.filter((img) => img !== url),
+      },
     });
   }
 
