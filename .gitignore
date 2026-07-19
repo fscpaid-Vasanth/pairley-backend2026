@@ -4,3 +4,4 @@ node_modules
 
 /generated/prisma
 dist/
+pre_module1_backup_*.json
