@@ -425,7 +425,13 @@ export class OfferService {
     });
   }
 
-  async getDetails(id: string) {
+  // `requestingUserId` is the caller's own id if authenticated (any role),
+  // undefined if anonymous. Only the offer's own business gets other
+  // customers' PII (name/mobile/email/address) on the interests list — every
+  // other caller (including a logged-in customer checking whether *they*
+  // already showed interest) only gets customer_id, which is enough for that
+  // self-match check without exposing anyone else's contact details.
+  async getDetails(id: string, requestingUserId?: string) {
     const offer = await this.prisma.offer.findUnique({
       where: { id },
       select: {
@@ -444,17 +450,12 @@ export class OfferService {
           },
         },
         interests: {
-          include: {
-            customer: {
-              select: {
-                id: true,
-                name: true,
-                mobile: true,
-                email: true,
-                city: true,
-                address: true,
-              },
-            },
+          select: {
+            id: true,
+            offer_id: true,
+            customer_id: true,
+            status: true,
+            created_at: true,
           },
         },
       },
@@ -464,7 +465,28 @@ export class OfferService {
       throw new NotFoundException('Offer not found');
     }
 
-    return offer;
+    const isOwner = requestingUserId && requestingUserId === offer.business_id;
+    if (!isOwner) {
+      return offer;
+    }
+
+    const interestsWithCustomer = await this.prisma.offerInterest.findMany({
+      where: { offer_id: id },
+      include: {
+        customer: {
+          select: {
+            id: true,
+            name: true,
+            mobile: true,
+            email: true,
+            city: true,
+            address: true,
+          },
+        },
+      },
+    });
+
+    return { ...offer, interests: interestsWithCustomer };
   }
 
   async getOffersByCategory(category: string) {
