@@ -1,10 +1,57 @@
-import { Controller, Get, Post, Put, Delete, Body, Query, Param, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Delete,
+  Body,
+  Query,
+  Param,
+  UseGuards,
+} from '@nestjs/common';
 import { OfferService } from './offer.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles, Role } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { IsNotEmpty, IsString, IsNumberString, IsOptional } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsString,
+  IsNumberString,
+  IsOptional,
+  IsIn,
+  IsNumber,
+  Min,
+  Max,
+} from 'class-validator';
+
+// Legacy values kept for backward compatibility; STANDARD is the new default.
+// See prisma/schema.prisma's OfferType enum comment for the full split.
+const OFFER_TYPES = [
+  'BOGO',
+  'BOGT',
+  'GROUP_DISCOUNT',
+  'BULK_PURCHASE',
+  'MEMBERSHIP_CAMPAIGN',
+  'PACKAGE_DEAL',
+  'STANDARD',
+  'BUY_X_GET_Y',
+  'FLAT_DISCOUNT',
+  'PERCENTAGE_DISCOUNT',
+  'CASHBACK',
+  'COMBO',
+  'SEASONAL',
+  'FESTIVAL',
+  'FLASH_DEAL',
+  'LIMITED_QUANTITY',
+  'LIMITED_TIME',
+] as const;
+
+// Statuses a merchant may set directly via PUT /offers/:id/status. CLOSED is
+// system-set only (legacy matching capacity reached); ARCHIVED is set via the
+// dedicated archive action, not this endpoint, to keep the two concerns
+// separate at the API surface even though both ultimately write `status`.
+const MERCHANT_SETTABLE_STATUSES = ['ACTIVE', 'PAUSED', 'DRAFT'] as const;
 
 class CreateOfferDto {
   @IsString()
@@ -15,8 +62,7 @@ class CreateOfferDto {
   @IsNotEmpty()
   description: string;
 
-  @IsString()
-  @IsNotEmpty()
+  @IsIn(OFFER_TYPES)
   offer_type: string;
 
   @IsString()
@@ -40,6 +86,9 @@ class CreateOfferDto {
   @IsNotEmpty()
   end_date: string;
 
+  // Legacy fields — still accepted for backward compatibility with any
+  // caller still using them, but new code should use cover_image/
+  // gallery_images below instead.
   @IsString()
   @IsOptional()
   offer_image?: string;
@@ -54,6 +103,54 @@ class CreateOfferDto {
   @IsString()
   @IsOptional()
   whatsapp_number?: string;
+
+  // Module 3 media model
+  @IsString()
+  @IsOptional()
+  cover_image?: string;
+
+  @IsOptional()
+  gallery_images?: string[];
+
+  // Location override — omit to inherit the business's own geo_lat/geo_lng
+  @IsNumber()
+  @Min(-90)
+  @Max(90)
+  @IsOptional()
+  geo_lat?: number;
+
+  @IsNumber()
+  @Min(-180)
+  @Max(180)
+  @IsOptional()
+  geo_lng?: number;
+}
+
+// Deliberately excludes business_id, created_at, updated_at, source,
+// confidence_score, imported_at, review_required, original_import_url,
+// original_import_source, merchant_verified, is_pairley_exclusive, and
+// status (status changes go through PUT /offers/:id/status instead) — all
+// admin/AI/system-only, never merchant-editable via this endpoint.
+class UpdateOfferDto {
+  @IsString() @IsOptional() title?: string;
+  @IsString() @IsOptional() description?: string;
+  @IsIn(OFFER_TYPES) @IsOptional() offer_type?: string;
+  @IsString() @IsOptional() category?: string;
+  @IsNumberString() @IsOptional() original_price?: string;
+  @IsNumberString() @IsOptional() offer_price?: string;
+  @IsNumberString() @IsOptional() required_people?: string;
+  @IsString() @IsOptional() start_date?: string;
+  @IsString() @IsOptional() end_date?: string;
+  @IsString() @IsOptional() whatsapp_number?: string;
+  @IsString() @IsOptional() cover_image?: string;
+  @IsOptional() gallery_images?: string[];
+  @IsNumber() @Min(-90) @Max(90) @IsOptional() geo_lat?: number;
+  @IsNumber() @Min(-180) @Max(180) @IsOptional() geo_lng?: number;
+}
+
+class UpdateOfferStatusDto {
+  @IsIn(MERCHANT_SETTABLE_STATUSES)
+  status: string;
 }
 
 class InterestDto {
@@ -61,8 +158,6 @@ class InterestDto {
   @IsNotEmpty()
   offerId: string;
 }
-
-
 
 @Controller('offers')
 export class OfferController {
@@ -78,7 +173,11 @@ export class OfferController {
   @Put('update/:id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.BUSINESS)
-  async updateOffer(@CurrentUser() user: any, @Param('id') offerId: string, @Body() body: any) {
+  async updateOffer(
+    @CurrentUser() user: any,
+    @Param('id') offerId: string,
+    @Body() body: any,
+  ) {
     return this.offerService.updateOffer(user.sub, offerId, body);
   }
 
@@ -95,9 +194,15 @@ export class OfferController {
     @Query('businessId') businessId?: string,
     @Query('search') search?: string,
     @Query('status') status?: string,
-    @Query('mall') mall?: string
+    @Query('mall') mall?: string,
   ) {
-    return this.offerService.listOffers({ category, businessId, search, status, mall });
+    return this.offerService.listOffers({
+      category,
+      businessId,
+      search,
+      status,
+      mall,
+    });
   }
 
   @Get('details/:id')
@@ -144,7 +249,7 @@ export class OfferController {
   async updateInterestStatus(
     @CurrentUser() user: any,
     @Param('id') interestId: string,
-    @Body('status') status: string
+    @Body('status') status: string,
   ) {
     return this.offerService.updateInterestStatus(user.sub, interestId, status);
   }
@@ -154,17 +259,14 @@ export class OfferController {
   async sendCoBuyMessage(
     @CurrentUser() user: any,
     @Param('dealId') dealId: string,
-    @Body() body: any
+    @Body() body: any,
   ) {
     return this.offerService.sendCoBuyMessage(user.sub, dealId, body);
   }
 
   @Get('chat/:dealId')
   @UseGuards(JwtAuthGuard)
-  async getCoBuyMessages(
-    @Param('dealId') dealId: string
-  ) {
+  async getCoBuyMessages(@Param('dealId') dealId: string) {
     return this.offerService.getCoBuyMessages(dealId);
   }
 }
-
