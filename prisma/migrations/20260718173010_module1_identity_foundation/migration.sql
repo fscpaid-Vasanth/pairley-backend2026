@@ -20,8 +20,12 @@ ALTER COLUMN "email" DROP NOT NULL;
 -- AlterTable
 ALTER TABLE "offers" ADD COLUMN     "source" "Source" NOT NULL DEFAULT 'MANUAL';
 
--- One-time backfill: every business row that already exists was created through
--- the self-service registration flow (Group B / AI import doesn't exist yet), so
--- all of them are real, owned accounts — never UNCLAIMED. Without this, the
--- default above would incorrectly mark all pre-existing merchants as unclaimed.
-UPDATE "businesses" SET "business_status" = 'CLAIMED' WHERE "business_status" = 'UNCLAIMED';
+-- One-time backfill: scoped to created_by_ai = false so any future AI-imported
+-- business (Group B) is never touched by this statement, even if re-run later.
+UPDATE "businesses"
+SET
+    business_status = 'CLAIMED',
+    source = 'MANUAL'
+WHERE
+    created_by_ai = false
+    AND business_status = 'UNCLAIMED';
