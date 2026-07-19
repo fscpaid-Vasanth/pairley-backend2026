@@ -29,13 +29,6 @@ const LEGACY_MATCHING_OFFER_TYPES = new Set([
   'PACKAGE_DEAL',
 ]);
 
-// Offer scalar fields safe to return from the public/customer-facing read
-// paths (listOffers, getDetails — both unauthenticated endpoints). Excludes
-// `source` and every Pairley 2.0 provenance field (confidence_score,
-// imported_at, review_required, original_import_url, original_import_source,
-// merchant_verified, is_pairley_exclusive, original_poster,
-// generated_offer_card) — customers must never see whether/how an offer was
-// imported, only the three approved badges once that UI exists.
 // Backend equivalent of the frontend's src/utils/geo.js haversineDistance —
 // kept separate rather than shared, since this file has no dependency on
 // the frontend package and the formula is a handful of lines.
@@ -55,6 +48,31 @@ function haversineKm(
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+// Single badge a customer ever sees for an offer's origin, computed
+// server-side with a fixed priority — the raw fields driving it
+// (merchant_verified/is_pairley_exclusive/source) never reach the client.
+// Verified Merchant > Pairley Exclusive > Imported from Public Information.
+// is_pairley_exclusive can be set today (admin-only, dormant — no UI calls
+// it yet); merchant_verified/source stay at their defaults until Group B.
+type OfferBadge = 'verified' | 'exclusive' | 'imported' | null;
+function computeOfferBadge(offer: {
+  merchant_verified: boolean;
+  is_pairley_exclusive: boolean;
+  source: string;
+}): OfferBadge {
+  if (offer.merchant_verified) return 'verified';
+  if (offer.is_pairley_exclusive) return 'exclusive';
+  if (offer.source !== 'MANUAL') return 'imported';
+  return null;
+}
+
+// Offer scalar fields safe to return from the public/customer-facing read
+// paths (listOffers, getDetails — both unauthenticated endpoints). Excludes
+// `source` and every Pairley 2.0 provenance field (confidence_score,
+// imported_at, review_required, original_import_url, original_import_source,
+// merchant_verified, is_pairley_exclusive, original_poster,
+// generated_offer_card) — customers must never see whether/how an offer was
+// imported, only the computed `badge` field added onto each response below.
 const PUBLIC_OFFER_FIELDS = {
   id: true,
   business_id: true,
@@ -395,6 +413,34 @@ export class OfferService {
     return { success: true, message: 'Offer permanently deleted' };
   }
 
+  // Admin-only, dormant — see dashboard.controller.ts's setOfferExclusive.
+  async setPairleyExclusive(offerId: string, isExclusive: boolean) {
+    const offer = await this.prisma.offer.findUnique({
+      where: { id: offerId },
+    });
+    if (!offer) {
+      throw new NotFoundException('Offer not found');
+    }
+
+    const existingVersionCount = await this.prisma.offerVersion.count({
+      where: { offer_id: offerId },
+    });
+    await this.prisma.offerVersion.create({
+      data: {
+        offer_id: offerId,
+        version_no: existingVersionCount + 1,
+        snapshot: offer as any,
+        changed_by: null,
+        change_type: 'ADMIN_MODERATION',
+      },
+    });
+
+    return this.prisma.offer.update({
+      where: { id: offerId },
+      data: { is_pairley_exclusive: isExclusive },
+    });
+  }
+
   async listOffers(filters: {
     category?: string;
     businessId?: string;
@@ -443,6 +489,9 @@ export class OfferService {
       where: whereClause,
       select: {
         ...PUBLIC_OFFER_FIELDS,
+        merchant_verified: true,
+        is_pairley_exclusive: true,
+        source: true,
         business: {
           select: {
             business_name: true,
@@ -465,14 +514,23 @@ export class OfferService {
     // followed by an in-memory distance pass is simpler and just as
     // correct. The (geo_lat, geo_lng) index exists for when a raw-SQL
     // bounding-box pre-filter becomes worth the added complexity.
-    // business.geo_lat/geo_lng are only fetched to resolve each offer's
-    // effective location above — never part of the public response shape.
-    const stripBusinessGeo = (o: (typeof offers)[number]) => ({
-      ...o,
-      business: o.business
-        ? { ...o.business, geo_lat: undefined, geo_lng: undefined }
-        : o.business,
-    });
+    // business.geo_lat/geo_lng and the raw badge-source fields
+    // (merchant_verified/is_pairley_exclusive/source) are only fetched to
+    // compute derived values below — never part of the public response.
+    const finalizeOffer = (o: (typeof offers)[number]) => {
+      const { merchant_verified, is_pairley_exclusive, source, ...rest } = o;
+      return {
+        ...rest,
+        badge: computeOfferBadge({
+          merchant_verified,
+          is_pairley_exclusive,
+          source,
+        }),
+        business: rest.business
+          ? { ...rest.business, geo_lat: undefined, geo_lng: undefined }
+          : rest.business,
+      };
+    };
 
     if (
       filters.lat != null &&
@@ -492,7 +550,7 @@ export class OfferService {
                   effLng,
                 )
               : null;
-          return { ...stripBusinessGeo(o), distanceKm };
+          return { ...finalizeOffer(o), distanceKm };
         })
         .filter(
           (o) =>
@@ -506,7 +564,7 @@ export class OfferService {
       return withDistance;
     }
 
-    return offers.map(stripBusinessGeo);
+    return offers.map(finalizeOffer);
   }
 
   // `requestingUserId` is the caller's own id if authenticated (any role),
@@ -520,6 +578,9 @@ export class OfferService {
       where: { id },
       select: {
         ...PUBLIC_OFFER_FIELDS,
+        merchant_verified: true,
+        is_pairley_exclusive: true,
+        source: true,
         business: {
           select: {
             id: true,
@@ -549,9 +610,19 @@ export class OfferService {
       throw new NotFoundException('Offer not found');
     }
 
+    const { merchant_verified, is_pairley_exclusive, source, ...rest } = offer;
+    const finalized = {
+      ...rest,
+      badge: computeOfferBadge({
+        merchant_verified,
+        is_pairley_exclusive,
+        source,
+      }),
+    };
+
     const isOwner = requestingUserId && requestingUserId === offer.business_id;
     if (!isOwner) {
-      return offer;
+      return finalized;
     }
 
     const interestsWithCustomer = await this.prisma.offerInterest.findMany({
@@ -570,7 +641,7 @@ export class OfferService {
       },
     });
 
-    return { ...offer, interests: interestsWithCustomer };
+    return { ...finalized, interests: interestsWithCustomer };
   }
 
   async getOffersByCategory(category: string) {

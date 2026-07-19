@@ -1,11 +1,20 @@
-import { Controller, Get, Put, Delete, Body, Param, Query, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Put,
+  Delete,
+  Body,
+  Param,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { DashboardService } from './dashboard.service';
 import { OfferService } from '../offer/offer.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles, Role } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { IsNotEmpty, IsString, IsIn } from 'class-validator';
+import { IsNotEmpty, IsString, IsIn, IsBoolean } from 'class-validator';
 
 class VerifyBusinessDto {
   @IsString()
@@ -14,8 +23,22 @@ class VerifyBusinessDto {
 }
 
 class ModerateOfferDto {
-  @IsIn(['ACTIVE', 'REJECTED', 'CLOSED', 'DRAFT', 'PENDING_APPROVAL', 'PAUSED', 'ARCHIVED', 'EXPIRED'])
+  @IsIn([
+    'ACTIVE',
+    'REJECTED',
+    'CLOSED',
+    'DRAFT',
+    'PENDING_APPROVAL',
+    'PAUSED',
+    'ARCHIVED',
+    'EXPIRED',
+  ])
   status: string;
+}
+
+class SetExclusiveDto {
+  @IsBoolean()
+  isExclusive: boolean;
 }
 
 @Controller()
@@ -52,7 +75,10 @@ export class DashboardController {
 
   @Put('admin/business/verify/:id')
   @Roles(Role.ADMIN)
-  async verifyBusiness(@Param('id') id: string, @Body() body: VerifyBusinessDto) {
+  async verifyBusiness(
+    @Param('id') id: string,
+    @Body() body: VerifyBusinessDto,
+  ) {
     return this.dashboardService.verifyBusiness(id, body.status);
   }
 
@@ -77,6 +103,19 @@ export class DashboardController {
   @Roles(Role.ADMIN)
   async permanentlyDeleteOffer(@Param('id') id: string) {
     return this.offerService.permanentlyDeleteOffer(id);
+  }
+
+  // Dormant — sets the "Pairley Exclusive" badge flag. No frontend UI calls
+  // this yet (Module 4 ships the badge *display* only); an admin-tools
+  // module will add a button for it later. Exists and is guarded now so the
+  // capability is real and testable ahead of that UI.
+  @Put('admin/offers/:id/exclusive')
+  @Roles(Role.ADMIN)
+  async setOfferExclusive(
+    @Param('id') id: string,
+    @Body() body: SetExclusiveDto,
+  ) {
+    return this.offerService.setPairleyExclusive(id, body.isExclusive);
   }
 
   @Get('admin/subscriptions')
