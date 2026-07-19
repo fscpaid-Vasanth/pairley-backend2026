@@ -58,6 +58,24 @@ const OFFER_TYPES = [
 // separate at the API surface even though both ultimately write `status`.
 const MERCHANT_SETTABLE_STATUSES = ['ACTIVE', 'PAUSED', 'DRAFT'] as const;
 
+// The 12 category ids the frontend's src/data/categories.js actually
+// offers — validated against real production data during Module 4 STEP 1
+// (every in-use category matched exactly, no normalization needed).
+const OFFER_CATEGORIES = [
+  'shopping',
+  'tours',
+  'dining',
+  'fitness',
+  'entertainment',
+  'education',
+  'beauty',
+  'subscriptions',
+  'adventure',
+  'home-services',
+  'healthcare',
+  'coworking',
+] as const;
+
 class CreateOfferDto {
   @IsString()
   @IsNotEmpty()
@@ -246,13 +264,35 @@ export class OfferController {
     @Query('search') search?: string,
     @Query('status') status?: string,
     @Query('mall') mall?: string,
+    @Query('lat') lat?: string,
+    @Query('lng') lng?: string,
+    @Query('radiusKm') radiusKm?: string,
   ) {
+    if (category && !OFFER_CATEGORIES.includes(category as any)) {
+      throw new BadRequestException(`Unknown category: ${category}`);
+    }
+
+    const parsedLat = lat !== undefined ? parseFloat(lat) : undefined;
+    const parsedLng = lng !== undefined ? parseFloat(lng) : undefined;
+    const parsedRadiusKm =
+      radiusKm !== undefined ? parseFloat(radiusKm) : undefined;
+    if (
+      [parsedLat, parsedLng, parsedRadiusKm].some(
+        (v) => v !== undefined && Number.isNaN(v),
+      )
+    ) {
+      throw new BadRequestException('lat/lng/radiusKm must be valid numbers');
+    }
+
     return this.offerService.listOffers({
       category,
       businessId,
       search,
       status,
       mall,
+      lat: parsedLat,
+      lng: parsedLng,
+      radiusKm: parsedRadiusKm,
     });
   }
 
@@ -267,6 +307,9 @@ export class OfferController {
 
   @Get('category/:category')
   async getByCategory(@Param('category') category: string) {
+    if (!OFFER_CATEGORIES.includes(category as any)) {
+      throw new BadRequestException(`Unknown category: ${category}`);
+    }
     return this.offerService.getOffersByCategory(category);
   }
 

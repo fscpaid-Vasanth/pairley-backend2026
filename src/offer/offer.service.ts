@@ -36,6 +36,25 @@ const LEGACY_MATCHING_OFFER_TYPES = new Set([
 // merchant_verified, is_pairley_exclusive, original_poster,
 // generated_offer_card) — customers must never see whether/how an offer was
 // imported, only the three approved badges once that UI exists.
+// Backend equivalent of the frontend's src/utils/geo.js haversineDistance —
+// kept separate rather than shared, since this file has no dependency on
+// the frontend package and the formula is a handful of lines.
+function haversineKm(
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number,
+): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const R = 6371;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 const PUBLIC_OFFER_FIELDS = {
   id: true,
   business_id: true,
@@ -366,7 +385,9 @@ export class OfferService {
 
   // Admin-only real delete — never exposed to the merchant-facing UI.
   async permanentlyDeleteOffer(offerId: string) {
-    const offer = await this.prisma.offer.findUnique({ where: { id: offerId } });
+    const offer = await this.prisma.offer.findUnique({
+      where: { id: offerId },
+    });
     if (!offer) {
       throw new NotFoundException('Offer not found');
     }
@@ -380,6 +401,9 @@ export class OfferService {
     search?: string;
     status?: string;
     mall?: string;
+    lat?: number;
+    lng?: number;
+    radiusKm?: number;
   }) {
     const whereClause: any = {};
 
@@ -393,6 +417,13 @@ export class OfferService {
       whereClause.status = filters.status as OfferStatus;
     } else if (!filters.status) {
       whereClause.status = OfferStatus.ACTIVE; // Active by default
+      // Defensive expiry filter — belt-and-suspenders alongside the hourly
+      // OfferExpiryScheduler sweep, so an offer past its end_date never
+      // appears in discovery during the gap before the sweep catches it.
+      // Only applied to the default (ACTIVE-only) view, not an explicit
+      // status/ALL request, so merchant/admin tooling still sees its own
+      // offers regardless of end_date.
+      whereClause.end_date = { gte: new Date() };
     }
 
     if (filters.mall) {
@@ -408,7 +439,7 @@ export class OfferService {
       ];
     }
 
-    return this.prisma.offer.findMany({
+    const offers = await this.prisma.offer.findMany({
       where: whereClause,
       select: {
         ...PUBLIC_OFFER_FIELDS,
@@ -418,11 +449,64 @@ export class OfferService {
             city: true,
             shop_photo: true,
             mall_name: true,
+            geo_lat: true,
+            geo_lng: true,
           },
         },
       },
       orderBy: { created_at: 'desc' },
     });
+
+    // Geo/radius filtering happens here rather than in the WHERE clause: an
+    // offer's effective location is its own geo_lat/geo_lng if set, else
+    // the owning business's — a COALESCE-across-relation bounding box isn't
+    // expressible via Prisma's query builder without dropping to raw SQL,
+    // and at current catalog size a single indexed query (status/category)
+    // followed by an in-memory distance pass is simpler and just as
+    // correct. The (geo_lat, geo_lng) index exists for when a raw-SQL
+    // bounding-box pre-filter becomes worth the added complexity.
+    // business.geo_lat/geo_lng are only fetched to resolve each offer's
+    // effective location above — never part of the public response shape.
+    const stripBusinessGeo = (o: (typeof offers)[number]) => ({
+      ...o,
+      business: o.business
+        ? { ...o.business, geo_lat: undefined, geo_lng: undefined }
+        : o.business,
+    });
+
+    if (
+      filters.lat != null &&
+      filters.lng != null &&
+      filters.radiusKm != null
+    ) {
+      const withDistance = offers
+        .map((o) => {
+          const effLat = o.geo_lat ?? o.business?.geo_lat ?? null;
+          const effLng = o.geo_lng ?? o.business?.geo_lng ?? null;
+          const distanceKm =
+            effLat != null && effLng != null
+              ? haversineKm(
+                  filters.lat as number,
+                  filters.lng as number,
+                  effLat,
+                  effLng,
+                )
+              : null;
+          return { ...stripBusinessGeo(o), distanceKm };
+        })
+        .filter(
+          (o) =>
+            o.distanceKm != null &&
+            o.distanceKm <= (filters.radiusKm as number),
+        );
+
+      withDistance.sort(
+        (a, b) => (a.distanceKm as number) - (b.distanceKm as number),
+      );
+      return withDistance;
+    }
+
+    return offers.map(stripBusinessGeo);
   }
 
   // `requestingUserId` is the caller's own id if authenticated (any role),

@@ -258,6 +258,11 @@ model Offer {
   saved_by  SavedOffer[]
   versions  OfferVersion[]
 
+  // Module 4 — supports a future raw-SQL bounding-box pre-filter for
+  // geo/radius discovery queries; current listOffers() does the distance
+  // pass in-memory on an already-narrowed (status/category-filtered) set,
+  // but this index is in place for when catalog size makes that worth it.
+  @@index([geo_lat, geo_lng])
   @@map("offers")
 }
 
