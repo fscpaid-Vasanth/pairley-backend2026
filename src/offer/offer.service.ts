@@ -878,4 +878,41 @@ export class OfferService {
       customerMobile: customer.mobile,
     };
   }
+
+  // System sweep (see OfferExpiryScheduler) — flips ACTIVE/PAUSED offers
+  // whose end_date has passed to EXPIRED. Runs unattended, so changed_by
+  // is left null on the version snapshot.
+  async expireOffers() {
+    const now = new Date();
+    const expiring = await this.prisma.offer.findMany({
+      where: {
+        status: { in: [OfferStatus.ACTIVE, OfferStatus.PAUSED] },
+        end_date: { lt: now },
+      },
+    });
+
+    for (const offer of expiring) {
+      const existingVersionCount = await this.prisma.offerVersion.count({
+        where: { offer_id: offer.id },
+      });
+      await this.prisma.offerVersion.create({
+        data: {
+          offer_id: offer.id,
+          version_no: existingVersionCount + 1,
+          snapshot: offer as any,
+          changed_by: null,
+          change_type: 'SYSTEM_EXPIRED',
+        },
+      });
+    }
+
+    if (expiring.length > 0) {
+      await this.prisma.offer.updateMany({
+        where: { id: { in: expiring.map((o) => o.id) } },
+        data: { status: OfferStatus.EXPIRED },
+      });
+    }
+
+    return { success: true, expiredCount: expiring.length };
+  }
 }
