@@ -663,6 +663,20 @@ export class OfferService {
     return this.listOffers({ category });
   }
 
+  async getCategoryCounts() {
+    const grouped = await this.prisma.offer.groupBy({
+      by: ['category'],
+      where: { status: OfferStatus.ACTIVE, end_date: { gte: new Date() } },
+      _count: { category: true },
+    });
+
+    const counts: Record<string, number> = {};
+    for (const row of grouped) {
+      counts[row.category] = row._count.category;
+    }
+    return counts;
+  }
+
   async expressInterest(customerId: string, offerId: string) {
     // 1. Fetch offer details
     const offer = await this.prisma.offer.findUnique({

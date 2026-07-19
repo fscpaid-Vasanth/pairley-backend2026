@@ -330,6 +330,14 @@ export class OfferController {
     return this.offerService.getOffersByCategory(category);
   }
 
+  // { [category]: activeOfferCount } for every category with at least one
+  // ACTIVE offer. Backs the category tiles in SearchOverlay — a shared
+  // endpoint rather than each surface computing its own count.
+  @Get('category-counts')
+  async getCategoryCounts() {
+    return this.offerService.getCategoryCounts();
+  }
+
   @Post('interest')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.CUSTOMER)
