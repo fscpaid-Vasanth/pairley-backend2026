@@ -58,10 +58,16 @@ export class BusinessService {
 
     if (email) {
       const normalizedEmail = email.trim().toLowerCase();
-      const existing = await this.prisma.business.findUnique({
-        where: { email: normalizedEmail },
-      });
-      if (existing && existing.id !== businessId) {
+      // Must be unique across all three role tables, not just Business —
+      // login() resolves by email across Admin/Business/Customer, so a
+      // collision with any of them can produce broken or ambiguous login
+      // behavior for whichever account matches first.
+      const [existingBusiness, existingAdmin, existingCustomer] = await Promise.all([
+        this.prisma.business.findUnique({ where: { email: normalizedEmail } }),
+        this.prisma.admin.findUnique({ where: { email: normalizedEmail } }),
+        this.prisma.customer.findUnique({ where: { email: normalizedEmail } }),
+      ]);
+      if ((existingBusiness && existingBusiness.id !== businessId) || existingAdmin || existingCustomer) {
         throw new BadRequestException(
           'This email is already in use by another account',
         );
