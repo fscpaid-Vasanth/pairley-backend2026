@@ -294,6 +294,11 @@ export class OfferService {
     });
   }
 
+  // "Delete" from the merchant UI archives, never physically deletes — an
+  // offer with real customer Lead/OfferInterest history cascades on hard
+  // delete (schema still has onDelete: Cascade for those relations), which
+  // would permanently destroy that history. Only permanentlyDeleteOffer()
+  // (admin-only) actually removes a row.
   async deleteOffer(businessId: string, offerId: string) {
     const offer = await this.prisma.offer.findUnique({
       where: { id: offerId },
@@ -306,8 +311,34 @@ export class OfferService {
       throw new ForbiddenException('You do not own this offer');
     }
 
+    const existingVersionCount = await this.prisma.offerVersion.count({
+      where: { offer_id: offerId },
+    });
+    await this.prisma.offerVersion.create({
+      data: {
+        offer_id: offerId,
+        version_no: existingVersionCount + 1,
+        snapshot: offer as any,
+        changed_by: businessId,
+        change_type: 'ARCHIVED',
+      },
+    });
+
+    await this.prisma.offer.update({
+      where: { id: offerId },
+      data: { status: OfferStatus.ARCHIVED },
+    });
+    return { success: true, message: 'Offer archived successfully' };
+  }
+
+  // Admin-only real delete — never exposed to the merchant-facing UI.
+  async permanentlyDeleteOffer(offerId: string) {
+    const offer = await this.prisma.offer.findUnique({ where: { id: offerId } });
+    if (!offer) {
+      throw new NotFoundException('Offer not found');
+    }
     await this.prisma.offer.delete({ where: { id: offerId } });
-    return { success: true, message: 'Offer deleted successfully' };
+    return { success: true, message: 'Offer permanently deleted' };
   }
 
   async listOffers(filters: {

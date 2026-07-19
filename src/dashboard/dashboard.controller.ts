@@ -1,10 +1,11 @@
-import { Controller, Get, Put, Body, Param, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Put, Delete, Body, Param, Query, UseGuards } from '@nestjs/common';
 import { DashboardService } from './dashboard.service';
+import { OfferService } from '../offer/offer.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles, Role } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { IsNotEmpty, IsString } from 'class-validator';
+import { IsNotEmpty, IsString, IsIn } from 'class-validator';
 
 class VerifyBusinessDto {
   @IsString()
@@ -13,15 +14,17 @@ class VerifyBusinessDto {
 }
 
 class ModerateOfferDto {
-  @IsString()
-  @IsNotEmpty()
-  status: 'ACTIVE' | 'REJECTED' | 'CLOSED' | 'DRAFT' | 'PENDING_APPROVAL';
+  @IsIn(['ACTIVE', 'REJECTED', 'CLOSED', 'DRAFT', 'PENDING_APPROVAL', 'PAUSED', 'ARCHIVED', 'EXPIRED'])
+  status: string;
 }
 
 @Controller()
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class DashboardController {
-  constructor(private readonly dashboardService: DashboardService) {}
+  constructor(
+    private readonly dashboardService: DashboardService,
+    private readonly offerService: OfferService,
+  ) {}
 
   // ==========================================
   // BUSINESS PORTAL ENDPOINTS
@@ -63,6 +66,17 @@ export class DashboardController {
   @Roles(Role.ADMIN)
   async moderateOffer(@Param('id') id: string, @Body() body: ModerateOfferDto) {
     return this.dashboardService.moderateOffer(id, body.status);
+  }
+
+  // Real, permanent delete — never exposed to the merchant-facing UI (that
+  // path archives instead, see offer.service.ts's deleteOffer()). No
+  // separate "Super Admin" role/tier exists in this system today, so this
+  // is gated behind the existing Role.ADMIN — flagging that distinction in
+  // case a stricter tier is introduced later.
+  @Delete('admin/offers/:id/permanent')
+  @Roles(Role.ADMIN)
+  async permanentlyDeleteOffer(@Param('id') id: string) {
+    return this.offerService.permanentlyDeleteOffer(id);
   }
 
   @Get('admin/subscriptions')
