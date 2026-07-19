@@ -11,6 +11,7 @@ import {
   UseInterceptors,
   UploadedFiles,
   BadRequestException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { OfferService } from './offer.service';
@@ -257,8 +258,16 @@ export class OfferController {
     return this.offerService.deleteOffer(user.sub, offerId);
   }
 
+  // Public list route — anyone can browse ACTIVE offers (the default when
+  // status is omitted). Requesting any other status (including ALL, which
+  // surfaces draft/pending/rejected/archived offers) requires authentication
+  // — merchant/admin dashboards already send a token on this call today, so
+  // this only closes anonymous scraping, it doesn't change any legitimate
+  // caller's behavior.
   @Get('list')
+  @UseGuards(OptionalJwtAuthGuard)
   async listOffers(
+    @CurrentUser() user: any,
     @Query('category') category?: string,
     @Query('businessId') businessId?: string,
     @Query('search') search?: string,
@@ -270,6 +279,12 @@ export class OfferController {
   ) {
     if (category && !OFFER_CATEGORIES.includes(category as any)) {
       throw new BadRequestException(`Unknown category: ${category}`);
+    }
+
+    if (status && status !== 'ACTIVE' && !user) {
+      throw new UnauthorizedException(
+        'Authentication required to view non-active offers',
+      );
     }
 
     const parsedLat = lat !== undefined ? parseFloat(lat) : undefined;
@@ -299,10 +314,12 @@ export class OfferController {
   // Public detail route — interested-customer PII (interests[].customer) is
   // only included in the response when the caller is authenticated as the
   // offer's own business. Anonymous/other callers get everything except that.
+  // Non-ACTIVE offers (draft/paused/archived/rejected/etc.) 404 for anyone
+  // except the owning business or an admin.
   @Get('details/:id')
   @UseGuards(OptionalJwtAuthGuard)
   async getDetails(@Param('id') id: string, @CurrentUser() user: any) {
-    return this.offerService.getDetails(id, user?.sub);
+    return this.offerService.getDetails(id, user?.sub, user?.role);
   }
 
   @Get('category/:category')

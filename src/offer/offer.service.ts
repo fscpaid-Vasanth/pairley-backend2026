@@ -573,7 +573,16 @@ export class OfferService {
   // other caller (including a logged-in customer checking whether *they*
   // already showed interest) only gets customer_id, which is enough for that
   // self-match check without exposing anyone else's contact details.
-  async getDetails(id: string, requestingUserId?: string) {
+  //
+  // A non-ACTIVE offer (draft/paused/archived/rejected/etc.) 404s for
+  // anyone except the owning business or an admin — everyone else gets the
+  // same "not found" a bad id would produce, not a distinguishable
+  // "exists but not visible" response.
+  async getDetails(
+    id: string,
+    requestingUserId?: string,
+    requestingRole?: string,
+  ) {
     const offer = await this.prisma.offer.findUnique({
       where: { id },
       select: {
@@ -610,6 +619,13 @@ export class OfferService {
       throw new NotFoundException('Offer not found');
     }
 
+    const isOwner = requestingUserId && requestingUserId === offer.business_id;
+    const isAdmin = requestingRole === 'Admin';
+
+    if (offer.status !== OfferStatus.ACTIVE && !isOwner && !isAdmin) {
+      throw new NotFoundException('Offer not found');
+    }
+
     const { merchant_verified, is_pairley_exclusive, source, ...rest } = offer;
     const finalized = {
       ...rest,
@@ -620,7 +636,6 @@ export class OfferService {
       }),
     };
 
-    const isOwner = requestingUserId && requestingUserId === offer.business_id;
     if (!isOwner) {
       return finalized;
     }
