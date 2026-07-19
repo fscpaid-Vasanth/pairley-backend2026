@@ -21,6 +21,10 @@ enum SubscriptionStatus {
   PENDING
 }
 
+// Legacy values (BOGO, BOGT, GROUP_DISCOUNT, BULK_PURCHASE, MEMBERSHIP_CAMPAIGN,
+// PACKAGE_DEAL) are kept exactly as-is for backward compatibility — the "Legacy
+// Mode" pair/group matching mechanic keeps working unchanged. All new offer
+// creation should use the new mechanics below; STANDARD is the default.
 enum OfferType {
   BOGO
   BOGT
@@ -28,8 +32,22 @@ enum OfferType {
   BULK_PURCHASE
   MEMBERSHIP_CAMPAIGN
   PACKAGE_DEAL
+  STANDARD
+  BUY_X_GET_Y
+  FLAT_DISCOUNT
+  PERCENTAGE_DISCOUNT
+  CASHBACK
+  COMBO
+  SEASONAL
+  FESTIVAL
+  FLASH_DEAL
+  LIMITED_QUANTITY
+  LIMITED_TIME
 }
 
+// PAUSED/ARCHIVED are additive — nothing removed, existing rows/logic using
+// the original 6 values are unaffected. CLOSED stays legacy-matching-only
+// (never entered by STANDARD/new-mechanic offers).
 enum OfferStatus {
   DRAFT
   PENDING_APPROVAL
@@ -37,6 +55,8 @@ enum OfferStatus {
   EXPIRED
   CLOSED
   REJECTED
+  PAUSED
+  ARCHIVED
 }
 
 enum InterestStatus {
@@ -186,32 +206,76 @@ model Subscription {
 }
 
 model Offer {
-  id               String      @id @default(uuid())
-  business_id      String
-  title            String
-  description      String
-  offer_type       OfferType
-  category         String
-  original_price   Float
-  offer_price      Float
-  required_people  Int
-  joined_people    Int         @default(0)
-  start_date       DateTime
-  end_date         DateTime
+  id              String      @id @default(uuid())
+  business_id     String
+  title           String
+  description     String
+  offer_type      OfferType
+  category        String
+  original_price  Float
+  offer_price     Float
+  required_people Int
+  joined_people   Int         @default(0)
+  start_date      DateTime
+  end_date        DateTime
+  status          OfferStatus @default(DRAFT)
+  source          Source      @default(MANUAL) // "offer_source" — reused from Module 1, shared with Business
+  whatsapp_number String?
+
+  // Legacy media — kept for migration compatibility, no longer written by new
+  // code. Backfilled into cover_image/gallery_images at migration time.
   offer_image      String?
-  facility_images  String[]    @default([])
+  facility_images  String[] @default([])
   facility_details String?
-  status           OfferStatus @default(DRAFT)
-  source           Source      @default(MANUAL) // schema prep for Pairley 2.0 AI import; not yet populated by any offer-creation code
-  whatsapp_number  String?
-  created_at       DateTime    @default(now())
-  updated_at       DateTime    @updatedAt
+
+  // Module 3 media model — all new writes use these
+  cover_image          String?
+  gallery_images       String[] @default([])
+  original_poster      String? // Pairley 2.0 — the raw imported poster, unused until Group B
+  generated_offer_card String? // Pairley 2.0 — AI-generated card, unused until Group B
+
+  // Location — offer coordinates override business coordinates when set;
+  // otherwise the effective location is resolved as business.geo_lat/geo_lng
+  // at the service layer (no geolocation logic duplicated here).
+  geo_lat Float?
+  geo_lng Float?
+
+  // Pairley 2.0 preparation — schema only, no AI logic, unused until Group B.
+  // Never exposed to customers (enforced at the API response layer, not here).
+  confidence_score       Float?
+  imported_at            DateTime?
+  review_required        Boolean   @default(false)
+  original_import_url    String?
+  original_import_source String?
+  merchant_verified      Boolean   @default(false)
+  is_pairley_exclusive   Boolean   @default(false) // admin-only badge flag
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
 
   business  Business        @relation(fields: [business_id], references: [id], onDelete: Cascade)
   interests OfferInterest[]
   saved_by  SavedOffer[]
+  versions  OfferVersion[]
 
   @@map("offers")
+}
+
+// Append-only history — every merchant edit, AI standardization, and admin
+// moderation action snapshots the offer's prior state here before applying
+// changes. Never used to overwrite anything; purely additive audit trail.
+model OfferVersion {
+  id          String   @id @default(uuid())
+  offer_id    String
+  version_no  Int
+  snapshot    Json // full offer field snapshot immediately before this change
+  changed_by  String? // business_id, or 'ADMIN', or 'AI_IMPORT'
+  change_type String // CREATED | MERCHANT_EDIT | STATUS_CHANGE | ADMIN_MODERATION | AI_IMPORT | AI_STANDARDIZATION
+  created_at  DateTime @default(now())
+
+  offer Offer @relation(fields: [offer_id], references: [id], onDelete: Cascade)
+
+  @@map("offer_versions")
 }
 
 model OfferInterest {
