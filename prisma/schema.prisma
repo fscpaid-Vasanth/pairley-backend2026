@@ -81,6 +81,14 @@ enum Source {
   ADMIN
 }
 
+// Whether a merchant wants incoming leads (Show Interest) auto-accepted or
+// held for manual review. Not wired into any lead-processing logic yet —
+// that lands with the Show Interest / Lead Management modules.
+enum LeadAcceptanceMode {
+  MANUAL
+  AUTOMATIC
+}
+
 model Customer {
   id                  String             @id @default(uuid())
   name                String
@@ -135,8 +143,24 @@ model Business {
   claimed_by           String?
   subscription_id      String?
   notification_mobiles String?
-  created_at           DateTime           @default(now())
-  updated_at           DateTime           @updatedAt
+
+  // Module 2: Business Profile
+  logo                 String?
+  cover_image          String?
+  gallery_images       String[]           @default([])
+  store_timing         Json? // { monday: { open, close, isClosed }, ... } — per-day hours, keyed by lowercase weekday
+  geo_lat              Float?
+  geo_lng              Float?
+  lead_acceptance_mode LeadAcceptanceMode @default(MANUAL)
+  description          String?
+  website              String?
+  instagram            String?
+  facebook             String?
+  whatsapp             String?
+  support_number       String?
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
 
   subscriptions Subscription[]
   offers        Offer[]
