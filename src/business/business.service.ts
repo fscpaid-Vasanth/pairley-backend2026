@@ -26,7 +26,26 @@ export class BusinessService {
   }
 
   async updateProfile(businessId: string, data: any) {
-    const { id, mobile, email, created_at, updated_at, verification_status, subscription_id, password_hash, ...updates } = data;
+    // business_status/source/created_by_ai/claimed_at/claimed_by are admin- or
+    // claim-flow-only — never self-editable via this endpoint. Same restriction
+    // as auth.service.ts's updateProfile(), applied here since this is a second,
+    // separate write path to the same Business row.
+    const {
+      id,
+      mobile,
+      email,
+      created_at,
+      updated_at,
+      verification_status,
+      subscription_id,
+      password_hash,
+      business_status,
+      source,
+      created_by_ai,
+      claimed_at,
+      claimed_by,
+      ...updates
+    } = data;
     return this.prisma.business.update({
       where: { id: businessId },
       data: updates,
