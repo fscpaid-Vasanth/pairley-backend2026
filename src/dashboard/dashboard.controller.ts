@@ -79,6 +79,19 @@ export class DashboardController {
     return this.systemHealthService.check();
   }
 
+  // TEMPORARY — Module 7 Sentry verification only (see MONITORING_SETUP.md
+  // §7). Admin-gated rather than NODE_ENV-gated because there's no separate
+  // staging environment; this must be triggerable on the actual deployed
+  // instance where SENTRY_DSN is configured. Remove once the test exception
+  // is confirmed in Sentry.
+  @Get('admin/test-sentry-exception')
+  @Roles(Role.ADMIN)
+  testSentryException(): never {
+    throw new Error(
+      'Module 7 Sentry verification test exception — safe to ignore, this is intentional.',
+    );
+  }
+
   @Get('admin/businesses')
   @Roles(Role.ADMIN)
   async getBusinesses(@Query('status') status?: string) {
