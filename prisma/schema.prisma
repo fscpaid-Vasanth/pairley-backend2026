@@ -403,7 +403,13 @@ model Lead {
   shop_id         String
   shop_name       String
   created_at      DateTime   @default(now())
-  updated_at      DateTime   @updatedAt
+  // @default(now()) alongside @updatedAt: Prisma's @updatedAt alone is an
+  // application-level behavior (auto-set on .update() calls), not a SQL
+  // DEFAULT — `prisma db push` correctly refused to add a bare NOT NULL
+  // column with no DB-level default against the 7 existing leads. The
+  // explicit default backfills those rows safely; @updatedAt still keeps
+  // updating it on every write going forward.
+  updated_at      DateTime   @default(now()) @updatedAt
   status          LeadStatus @default(NEW)
 
   // No @relation fields by design — a lead is a standalone record of a

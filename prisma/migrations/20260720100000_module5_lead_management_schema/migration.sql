@@ -5,7 +5,14 @@
 -- against the 7 existing lead rows in production. Fixed below with an
 -- explicit default. The status column swap is safe: every existing lead's
 -- status is the literal string 'Interested', which maps 1:1 to the new
--- enum's default value 'NEW'. Not yet applied to any database.
+-- enum's default value 'NEW'.
+--
+-- At deployment time, `prisma db push` (the actual apply mechanism this
+-- project uses — this file is documentation/review only, db push
+-- regenerates its own DDL from schema.prisma) independently caught the
+-- same issue and refused to run: `@updatedAt` alone has no SQL-level
+-- DEFAULT. Fixed in schema.prisma with `@default(now()) @updatedAt`
+-- before re-running db push. No data was touched by the aborted attempt.
 
 -- CreateEnum
 CREATE TYPE "LeadStatus" AS ENUM ('NEW', 'CONTACTED', 'CONVERTED', 'NOT_INTERESTED');
