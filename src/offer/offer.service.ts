@@ -14,6 +14,7 @@ import {
   InterestStatus,
   SubscriptionStatus,
   VerificationStatus,
+  LeadStatus,
 } from '@prisma/client';
 
 // Legacy pair/group matching mechanics — kept working exactly as before.
@@ -1046,7 +1047,7 @@ export class OfferService {
         offer_name: offer.title,
         shop_id: offer.business_id,
         shop_name: offer.business.business_name,
-        status: 'Interested',
+        status: LeadStatus.NEW,
       },
     });
 

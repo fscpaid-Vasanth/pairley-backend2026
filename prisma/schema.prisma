@@ -67,6 +67,15 @@ enum InterestStatus {
   CANCELLED
 }
 
+// Module 5 — Lead Management. NEW is the default for every lead created by
+// Show Interest (Module 3); the merchant progresses it from the Leads page.
+enum LeadStatus {
+  NEW
+  CONTACTED
+  CONVERTED
+  NOT_INTERESTED
+}
+
 enum SupportStatus {
   OPEN
   IN_PROGRESS
@@ -385,7 +394,7 @@ model CoBuyMessage {
 }
 
 model Lead {
-  id              String   @id @default(uuid())
+  id              String     @id @default(uuid())
   customer_id     String
   customer_name   String
   customer_mobile String
@@ -393,9 +402,15 @@ model Lead {
   offer_name      String
   shop_id         String
   shop_name       String
-  created_at      DateTime @default(now())
-  status          String   @default("Interested")
+  created_at      DateTime   @default(now())
+  updated_at      DateTime   @updatedAt
+  status          LeadStatus @default(NEW)
 
+  // No @relation fields by design — a lead is a standalone record of a
+  // business's own history and must survive the customer/offer/business
+  // rows it references being later deleted (see Module 4's cleanup: leads
+  // do not cascade-delete with the customer, intentionally).
+  @@index([shop_id, status, created_at])
   @@map("leads")
 }
 
