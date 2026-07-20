@@ -3,6 +3,7 @@ import { HealthCheckService, PrismaHealthIndicator } from '@nestjs/terminus';
 import { AppService } from './app.service';
 import { PrismaService } from './prisma/prisma.service';
 import { StorageService } from './common/services/storage.service';
+import { getRelease } from './common/utils/release.util';
 
 @Controller()
 export class AppController {
@@ -27,8 +28,7 @@ export class AppController {
   // unreachable S3 shouldn't make /health itself slow or fail.
   @Get('health')
   async getHealth() {
-    const release =
-      process.env.RELEASE_SHA || process.env.RENDER_GIT_COMMIT || 'unknown';
+    const release = getRelease();
     const environment = process.env.NODE_ENV || 'development';
     const serverTime = new Date().toISOString();
     const processUptimeSeconds = Math.floor(process.uptime());
