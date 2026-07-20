@@ -134,8 +134,16 @@ model Customer {
   profile_photo       String?
   referral_code       String?
   verification_status VerificationStatus @default(UNVERIFIED)
-  created_at          DateTime           @default(now())
-  updated_at          DateTime           @updatedAt
+
+  // Module 6 — persisted notification preferences. Saved/retrieved only;
+  // notificationService does not yet consult these on any send path
+  // (deliberately out of scope for this module, per approved decision).
+  notify_email    Boolean @default(true)
+  notify_push     Boolean @default(true)
+  notify_matching Boolean @default(true)
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
 
   interests    OfferInterest[]
   saved_offers SavedOffer[]

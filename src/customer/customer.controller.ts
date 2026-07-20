@@ -19,6 +19,7 @@ import {
   IsEmail,
   IsOptional,
   IsDateString,
+  IsBoolean,
 } from 'class-validator';
 
 class SaveOfferDto {
@@ -42,6 +43,9 @@ class UpdateCustomerProfileDto {
   @IsString() @IsOptional() gender?: string;
   @IsDateString() @IsOptional() date_of_birth?: string;
   @IsOptional() age?: number;
+  @IsBoolean() @IsOptional() notify_email?: boolean;
+  @IsBoolean() @IsOptional() notify_push?: boolean;
+  @IsBoolean() @IsOptional() notify_matching?: boolean;
 }
 
 @Controller('customers')
