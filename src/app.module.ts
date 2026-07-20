@@ -4,6 +4,8 @@ import { APP_FILTER } from '@nestjs/core';
 import { TerminusModule } from '@nestjs/terminus';
 import { SentryModule } from '@sentry/nestjs/setup';
 import { SentryGlobalFilter } from '@sentry/nestjs/setup';
+import { LoggerModule } from 'nestjs-pino';
+import { buildLoggerParams } from './common/config/logger.config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PrismaModule } from './prisma/prisma.module';
@@ -23,6 +25,7 @@ import { WhatsappModule } from './whatsapp/whatsapp.module';
 @Module({
   imports: [
     SentryModule.forRoot(),
+    LoggerModule.forRoot(buildLoggerParams()),
     ConfigModule.forRoot({
       isGlobal: true,
     }),

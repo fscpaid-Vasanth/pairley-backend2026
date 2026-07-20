@@ -67,3 +67,48 @@ function redact(value: unknown, depth: number): unknown {
 export function redactSensitive<T>(value: T): T {
   return redact(value, 0) as T;
 }
+
+// fast-redact (used by pino's `redact` option) needs literal paths rather
+// than the substring matching above — kept in sync with
+// SENSITIVE_KEY_FRAGMENTS by hand since the two libraries' redaction
+// mechanisms aren't compatible with a single shared implementation.
+const SENSITIVE_FIELD_NAMES = [
+  'password',
+  'password_hash',
+  'otp',
+  'otp_code',
+  'token',
+  'accessToken',
+  'access_token',
+  'refreshToken',
+  'refresh_token',
+  'jwt',
+  'session',
+  'cookie',
+  'secret',
+  'client_secret',
+  'aadhaar',
+  'aadhaar_number',
+  'pan',
+  'pan_number',
+  'gst',
+  'gst_number',
+  'aws_access_key_id',
+  'aws_secret_access_key',
+  'razorpay_key_id',
+  'razorpay_key_secret',
+  'openai_api_key',
+  'google_api_key',
+  'whatsapp_access_token',
+  'whatsapp_api_token',
+  'meta_token',
+  'firebase_token',
+  'fcm_token',
+];
+
+export const PINO_REDACT_PATHS: string[] = [
+  'req.headers.authorization',
+  'req.headers.cookie',
+  'req.headers["set-cookie"]',
+  ...SENSITIVE_FIELD_NAMES.map((field) => `*.${field}`),
+];
