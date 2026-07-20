@@ -1,7 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER } from '@nestjs/core';
-import { TerminusModule } from '@nestjs/terminus';
 import { SentryModule } from '@sentry/nestjs/setup';
 import { SentryGlobalFilter } from '@sentry/nestjs/setup';
 import { LoggerModule } from 'nestjs-pino';
@@ -42,7 +41,6 @@ import { WhatsappModule } from './whatsapp/whatsapp.module';
     SupportModule,
     DashboardModule,
     WhatsappModule,
-    TerminusModule,
   ],
   controllers: [AppController],
   providers: [

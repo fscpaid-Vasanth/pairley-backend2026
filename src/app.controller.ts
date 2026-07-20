@@ -1,18 +1,14 @@
 import { Controller, Get, ServiceUnavailableException } from '@nestjs/common';
-import { HealthCheckService, PrismaHealthIndicator } from '@nestjs/terminus';
 import { AppService } from './app.service';
 import { PrismaService } from './prisma/prisma.service';
-import { StorageService } from './common/services/storage.service';
-import { getRelease } from './common/utils/release.util';
+import { SystemHealthService } from './common/services/system-health.service';
 
 @Controller()
 export class AppController {
   constructor(
     private readonly appService: AppService,
     private readonly prismaService: PrismaService,
-    private readonly storageService: StorageService,
-    private readonly health: HealthCheckService,
-    private readonly prismaHealth: PrismaHealthIndicator,
+    private readonly systemHealthService: SystemHealthService,
   ) {}
 
   @Get()
@@ -28,35 +24,8 @@ export class AppController {
   // unreachable S3 shouldn't make /health itself slow or fail.
   @Get('health')
   async getHealth() {
-    const release = getRelease();
-    const environment = process.env.NODE_ENV || 'development';
-    const serverTime = new Date().toISOString();
-    const processUptimeSeconds = Math.floor(process.uptime());
-
-    let databaseOk = true;
-    try {
-      await this.health.check([
-        () => this.prismaHealth.pingCheck('database', this.prismaService),
-      ]);
-    } catch {
-      databaseOk = false;
-    }
-
-    const storageResult = await this.storageService.checkHealth();
-
-    const body = {
-      status: !databaseOk ? 'down' : storageResult.ok ? 'ok' : 'degraded',
-      checks: {
-        database: databaseOk ? 'ok' : 'down',
-        storage: storageResult.ok ? 'ok' : 'unreachable',
-      },
-      release,
-      environment,
-      serverTime,
-      processUptimeSeconds,
-    };
-
-    if (!databaseOk) {
+    const body = await this.systemHealthService.check();
+    if (body.checks.database !== 'ok') {
       throw new ServiceUnavailableException(body);
     }
     return body;

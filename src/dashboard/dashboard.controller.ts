@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { DashboardService } from './dashboard.service';
 import { OfferService } from '../offer/offer.service';
+import { SystemHealthService } from '../common/services/system-health.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles, Role } from '../common/decorators/roles.decorator';
@@ -47,6 +48,7 @@ export class DashboardController {
   constructor(
     private readonly dashboardService: DashboardService,
     private readonly offerService: OfferService,
+    private readonly systemHealthService: SystemHealthService,
   ) {}
 
   // ==========================================
@@ -65,6 +67,16 @@ export class DashboardController {
   @Roles(Role.ADMIN)
   async getAdminDashboard() {
     return this.dashboardService.getAdminMetrics();
+  }
+
+  // Same checks as the public GET /api/health, but admin-gated and always
+  // 200 (even when a check fails) — this backs a dashboard tile, not an
+  // uptime monitor, so the caller wants the status in the body rather than
+  // having the fetch itself fail.
+  @Get('admin/system-health')
+  @Roles(Role.ADMIN)
+  async getSystemHealth() {
+    return this.systemHealthService.check();
   }
 
   @Get('admin/businesses')
