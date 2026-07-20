@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -16,7 +20,14 @@ export class CustomerService {
   }
 
   async updateProfile(customerId: string, data: any) {
-    const { id, mobile, created_at, updated_at, verification_status, ...updates } = data;
+    const {
+      id,
+      mobile,
+      created_at,
+      updated_at,
+      verification_status,
+      ...updates
+    } = data;
     if (updates.date_of_birth) {
       updates.date_of_birth = new Date(updates.date_of_birth);
     }
@@ -70,7 +81,9 @@ export class CustomerService {
 
   async saveOffer(customerId: string, offerId: string) {
     // Check if offer exists
-    const offer = await this.prisma.offer.findUnique({ where: { id: offerId } });
+    const offer = await this.prisma.offer.findUnique({
+      where: { id: offerId },
+    });
     if (!offer) {
       throw new NotFoundException('Offer not found');
     }
