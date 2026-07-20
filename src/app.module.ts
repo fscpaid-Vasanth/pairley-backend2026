@@ -8,6 +8,7 @@ import { AuthModule } from './auth/auth.module';
 import { CustomerModule } from './customer/customer.module';
 import { BusinessModule } from './business/business.module';
 import { OfferModule } from './offer/offer.module';
+import { LeadModule } from './lead/lead.module';
 import { SubscriptionModule } from './subscription/subscription.module';
 import { PaymentModule } from './payment/payment.module';
 import { NotificationModule } from './notification/notification.module';
@@ -26,6 +27,7 @@ import { WhatsappModule } from './whatsapp/whatsapp.module';
     CustomerModule,
     BusinessModule,
     OfferModule,
+    LeadModule,
     SubscriptionModule,
     PaymentModule,
     NotificationModule,
