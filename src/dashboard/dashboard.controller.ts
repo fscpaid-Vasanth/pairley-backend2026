@@ -87,10 +87,16 @@ export class DashboardController {
   // is confirmed in Sentry.
   @Get('admin/test-sentry-exception')
   @Roles(Role.ADMIN)
-  testSentryException(): never {
-    throw new Error(
+  async testSentryException() {
+    const error = new Error(
       'Module 7 Sentry verification test exception — safe to ignore, this is intentional.',
     );
+    // Explicit capture + flush, independent of SentryGlobalFilter, so we get
+    // a definitive send/fail signal back in the response body rather than
+    // needing to check Render's logs.
+    const eventId = Sentry.captureException(error);
+    const flushed = await Sentry.flush(5000);
+    return { eventId, flushed };
   }
 
   // TEMPORARY — diagnostic only, never returns the DSN itself. Remove
