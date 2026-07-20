@@ -1051,6 +1051,20 @@ export class OfferService {
       },
     });
 
+    // Notify the merchant server-side (DB row + push if a token exists) —
+    // previously the only signal a merchant got was the customer's own
+    // browser opening wa.me popups, which silently do nothing if the tab
+    // closes or the browser blocks them. Fire-and-forget: never blocks or
+    // fails the customer's Show Interest action.
+    this.notificationService
+      .sendNotification(
+        offer.business_id,
+        'New Lead!',
+        `${customer.name} showed interest in "${offer.title}". Tap to view.`,
+        'NEW_LEAD',
+      )
+      .catch((err) => {});
+
     // Legacy pair/group matching mechanics only: also register the customer
     // in the OfferInterest matching pool (capacity tracking, chat, auto-close
     // on capacity reached — all handled elsewhere via expressInterest()'s
