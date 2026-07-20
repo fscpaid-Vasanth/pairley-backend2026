@@ -8,6 +8,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import * as Sentry from '@sentry/nestjs';
 import { DashboardService } from './dashboard.service';
 import { OfferService } from '../offer/offer.service';
 import { SystemHealthService } from '../common/services/system-health.service';
@@ -90,6 +91,26 @@ export class DashboardController {
     throw new Error(
       'Module 7 Sentry verification test exception — safe to ignore, this is intentional.',
     );
+  }
+
+  // TEMPORARY — diagnostic only, never returns the DSN itself. Remove
+  // alongside test-sentry-exception once verification is done.
+  @Get('admin/test-sentry-status')
+  @Roles(Role.ADMIN)
+  testSentryStatus() {
+    const client = Sentry.getClient();
+    return {
+      dsnEnvVarPresent: !!process.env.SENTRY_DSN,
+      dsnEnvVarLength: process.env.SENTRY_DSN?.length || 0,
+      sentryClientInitialized: !!client,
+      sentryClientOptions: client
+        ? {
+            environment: client.getOptions().environment,
+            release: client.getOptions().release,
+            dsnHost: client.getDsn()?.host,
+          }
+        : null,
+    };
   }
 
   @Get('admin/businesses')
