@@ -9,6 +9,10 @@ import { NotificationService } from '../common/services/notification.service';
 import { OtpService } from '../common/services/otp.service';
 import { StorageService } from '../common/services/storage.service';
 import {
+  WhatsappService,
+  resolveLeadWhatsappNumber,
+} from '../whatsapp/whatsapp.service';
+import {
   OfferType,
   OfferStatus,
   InterestStatus,
@@ -107,6 +111,7 @@ export class OfferService {
     private notificationService: NotificationService,
     private otpService: OtpService,
     private storageService: StorageService,
+    private whatsappService: WhatsappService,
   ) {}
 
   async createOffer(businessId: string, data: any) {
@@ -1065,6 +1070,13 @@ export class OfferService {
       )
       .catch((err) => {});
 
+    // Module 8 — WhatsApp Business API lead alert. Additional channel
+    // alongside the DB/push notification above, not a replacement. Also
+    // fire-and-forget: never blocks or fails Show Interest.
+    this.sendLeadWhatsappAlert(offer.business, customer, offer, lead.id).catch(
+      () => {},
+    );
+
     // Legacy pair/group matching mechanics only: also register the customer
     // in the OfferInterest matching pool (capacity tracking, chat, auto-close
     // on capacity reached — all handled elsewhere via expressInterest()'s
@@ -1133,6 +1145,78 @@ export class OfferService {
       customerName: customer.name,
       customerMobile: customer.mobile,
     };
+  }
+
+  // Module 8 — WhatsApp Business API lead alert to the merchant's verified
+  // number. Requires an approved template (business-initiated messages
+  // outside a 24h session window can't use freeform text) — fails
+  // gracefully and gets logged as FAILED until "new_lead_alert" is
+  // submitted/approved in Meta Business Manager; this is expected, not a
+  // bug, until that external step is done. One retry on failure, no queue
+  // — see Module 8 STEP 1's approved retry-strategy decision.
+  private async sendLeadWhatsappAlert(
+    business: {
+      id: string;
+      mobile: string;
+      lead_whatsapp_number: string | null;
+      lead_whatsapp_verified: boolean;
+      notify_whatsapp: boolean;
+    },
+    customer: { name: string },
+    offer: { title: string },
+    leadId: string,
+  ): Promise<void> {
+    if (!business.notify_whatsapp) {
+      return;
+    }
+    const { number, verified } = resolveLeadWhatsappNumber(business);
+    if (!verified) {
+      return;
+    }
+    const phoneNumberId = this.whatsappService.getSenderPhoneNumberId();
+    if (!phoneNumberId) {
+      return;
+    }
+
+    const components = [
+      {
+        type: 'body',
+        parameters: [
+          { type: 'text', text: customer.name },
+          { type: 'text', text: offer.title },
+        ],
+      },
+    ];
+
+    let result = await this.whatsappService.sendTemplateMessage(
+      number,
+      phoneNumberId,
+      'new_lead_alert',
+      'en',
+      components,
+    );
+    if (!result.success) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      result = await this.whatsappService.sendTemplateMessage(
+        number,
+        phoneNumberId,
+        'new_lead_alert',
+        'en',
+        components,
+      );
+    }
+
+    await this.prisma.whatsAppMessage.create({
+      data: {
+        business_id: business.id,
+        direction: 'OUTBOUND',
+        template: 'new_lead_alert',
+        to_number: number,
+        status: result.success ? 'SENT' : 'FAILED',
+        error: result.error,
+        related_lead_id: leadId,
+      },
+    });
   }
 
   // System sweep (see OfferExpiryScheduler) — flips ACTIVE/PAUSED offers
