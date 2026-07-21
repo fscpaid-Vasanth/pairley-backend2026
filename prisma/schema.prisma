@@ -118,6 +118,16 @@ enum LeadAcceptanceMode {
   AUTOMATIC
 }
 
+// Module 9 — AI Offer Discovery (Group B) foundation. Tracks one import
+// attempt end to end (currently WEBSITE only; the Source enum's other
+// values are reserved for later modules).
+enum ImportJobStatus {
+  QUEUED
+  PROCESSING
+  DONE
+  FAILED
+}
+
 model Customer {
   id                  String             @id @default(uuid())
   name                String
@@ -158,7 +168,7 @@ model Business {
   business_name        String
   business_type        String
   category             String
-  mobile               String             @unique
+  mobile               String?            @unique // nullable as of Module 9: an AI-imported UNCLAIMED business may have no verified phone number yet — every existing self-registration path still always sets this
   email                String?            @unique // nullable: AI-imported businesses (Pairley 2.0) may have no known email
   password_hash        String? // Optional password for portal login
   address              String
@@ -467,4 +477,27 @@ model WhatsAppMessage {
 
   @@index([business_id, created_at])
   @@map("whatsapp_messages")
+}
+
+// Module 9 Phase 1 — AI Offer Discovery (Group B) repository foundation.
+// One row per import attempt. Standalone/no @relation fields (same
+// precedent as WhatsAppMessage above): a job's history must survive even if
+// the Business/Offer it eventually produces is later deleted, and a failed
+// job may never produce either. created_business_id/created_offer_id are
+// populated once Phase 2+ actually create those rows — Phase 1 only
+// establishes the table.
+model ImportJob {
+  id                  String          @id @default(uuid())
+  source_type         Source          @default(WEBSITE)
+  source_url          String
+  status              ImportJobStatus @default(QUEUED)
+  error               String?
+  extracted_fields    Json?
+  created_business_id String?
+  created_offer_id    String?
+  created_at          DateTime        @default(now())
+  updated_at          DateTime        @updatedAt
+
+  @@index([status, created_at])
+  @@map("import_jobs")
 }

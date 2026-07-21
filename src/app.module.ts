@@ -20,6 +20,7 @@ import { NotificationModule } from './notification/notification.module';
 import { SupportModule } from './support/support.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { WhatsappModule } from './whatsapp/whatsapp.module';
+import { DiscoveryModule } from './discovery/discovery.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { WhatsappModule } from './whatsapp/whatsapp.module';
     SupportModule,
     DashboardModule,
     WhatsappModule,
+    DiscoveryModule,
   ],
   controllers: [AppController],
   providers: [

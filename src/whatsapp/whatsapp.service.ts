@@ -19,12 +19,16 @@ interface MetaSendResponse {
 // already OTP-verified registration `mobile` is used and treated as
 // verified — see the Business model's schema comment (Module 8).
 export function resolveLeadWhatsappNumber(business: {
-  mobile: string;
+  mobile: string | null;
   lead_whatsapp_number: string | null;
   lead_whatsapp_verified: boolean;
-}): { number: string; verified: boolean; isDefault: boolean } {
+}): { number: string | null; verified: boolean; isDefault: boolean } {
   if (!business.lead_whatsapp_number) {
-    return { number: business.mobile, verified: true, isDefault: true };
+    return {
+      number: business.mobile,
+      verified: !!business.mobile,
+      isDefault: true,
+    };
   }
   return {
     number: business.lead_whatsapp_number,

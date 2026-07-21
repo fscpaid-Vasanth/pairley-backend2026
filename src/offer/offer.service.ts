@@ -1157,7 +1157,7 @@ export class OfferService {
   private async sendLeadWhatsappAlert(
     business: {
       id: string;
-      mobile: string;
+      mobile: string | null;
       lead_whatsapp_number: string | null;
       lead_whatsapp_verified: boolean;
       notify_whatsapp: boolean;
@@ -1170,7 +1170,7 @@ export class OfferService {
       return;
     }
     const { number, verified } = resolveLeadWhatsappNumber(business);
-    if (!verified) {
+    if (!verified || !number) {
       return;
     }
     const phoneNumberId = this.whatsappService.getSenderPhoneNumberId();

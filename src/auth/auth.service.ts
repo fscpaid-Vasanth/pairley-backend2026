@@ -629,13 +629,13 @@ export class AuthService implements OnModuleInit {
 
   private generateToken(
     id: string,
-    mobile: string,
+    mobile: string | null,
     role: string,
     email?: string,
   ) {
     return this.jwtService.sign({
       sub: id,
-      mobile,
+      mobile: mobile || '',
       role,
       email: email || '',
     });
