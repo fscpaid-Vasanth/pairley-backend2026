@@ -1,11 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-export interface WhatsAppMessage {
-  from: string;       // Sender's WhatsApp number (international format, e.g. "919876543210")
-  id: string;         // Message ID
+export interface InboundWhatsAppMessage {
+  from: string; // Sender's WhatsApp number (international format, e.g. "919876543210")
+  id: string; // Message ID
   timestamp: string;
-  type: string;       // "text" | "image" | "interactive" | "button" etc.
+  type: string; // "text" | "image" | "interactive" | "button" etc.
   text?: { body: string };
   interactive?: {
     type: string;
@@ -48,7 +48,7 @@ export class WhatsappService {
       this.configService.get<string>('WHATSAPP_PHONE_NUMBER_ID');
 
     // Handle incoming messages
-    const messages: WhatsAppMessage[] = value.messages ?? [];
+    const messages: InboundWhatsAppMessage[] = value.messages ?? [];
     for (const message of messages) {
       await this.handleMessage(message, phoneNumberId);
     }
@@ -63,7 +63,7 @@ export class WhatsappService {
   }
 
   private async handleMessage(
-    message: WhatsAppMessage,
+    message: InboundWhatsAppMessage,
     phoneNumberId: string,
   ): Promise<void> {
     this.logger.log(
@@ -84,7 +84,7 @@ export class WhatsappService {
   }
 
   private async handleTextMessage(
-    message: WhatsAppMessage,
+    message: InboundWhatsAppMessage,
     phoneNumberId: string,
   ): Promise<void> {
     const text = message.text?.body?.toLowerCase().trim() ?? '';
@@ -126,12 +126,11 @@ export class WhatsappService {
   }
 
   private async handleInteractiveMessage(
-    message: WhatsAppMessage,
+    message: InboundWhatsAppMessage,
     phoneNumberId: string,
   ): Promise<void> {
     const reply =
-      message.interactive?.button_reply ||
-      message.interactive?.list_reply;
+      message.interactive?.button_reply || message.interactive?.list_reply;
     if (!reply) return;
 
     this.logger.log(
@@ -183,12 +182,16 @@ export class WhatsappService {
 
       if (!response.ok) {
         const err = await response.json();
-        this.logger.error(`Failed to send WhatsApp message: ${JSON.stringify(err)}`);
+        this.logger.error(
+          `Failed to send WhatsApp message: ${JSON.stringify(err)}`,
+        );
         return;
       }
 
       const data = await response.json();
-      this.logger.log(`✅ WhatsApp message sent | message_id=${data?.messages?.[0]?.id}`);
+      this.logger.log(
+        `✅ WhatsApp message sent | message_id=${data?.messages?.[0]?.id}`,
+      );
     } catch (error) {
       this.logger.error('Error sending WhatsApp message:', error);
     }

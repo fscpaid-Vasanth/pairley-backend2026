@@ -4,13 +4,19 @@ import {
   Post,
   Body,
   Query,
+  Req,
   Res,
   HttpStatus,
   Logger,
+  UseGuards,
 } from '@nestjs/common';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
+import { createHmac, timingSafeEqual } from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { WhatsappService } from './whatsapp.service';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles, Role } from '../common/decorators/roles.decorator';
 
 @Controller('whatsapp')
 export class WhatsappController {
@@ -22,10 +28,13 @@ export class WhatsappController {
   ) {}
 
   // ─────────────────────────────────────────────────────────────
-  // HEALTH CHECK — Safe endpoint to verify the server + env setup
+  // HEALTH CHECK — env-check details, admin-only since it reveals
+  // whether secrets are configured (length only, never the value)
   // GET /api/whatsapp/health
   // ─────────────────────────────────────────────────────────────
   @Get('health')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
   healthCheck(@Res() res: Response) {
     const verifyToken = this.configService.get<string>('WHATSAPP_VERIFY_TOKEN');
     const phoneId = this.configService.get<string>('WHATSAPP_PHONE_NUMBER_ID');
@@ -35,11 +44,18 @@ export class WhatsappController {
       status: 'WhatsApp Webhook Service is running',
       timestamp: new Date().toISOString(),
       env_check: {
-        WHATSAPP_VERIFY_TOKEN: verifyToken ? `✅ Set (${verifyToken.length} chars, starts: "${verifyToken.slice(0, 5)}...")` : '❌ NOT SET',
-        WHATSAPP_PHONE_NUMBER_ID: phoneId ? `✅ Set (${phoneId})` : '❌ NOT SET',
-        WHATSAPP_API_TOKEN: apiToken ? `✅ Set (${apiToken.length} chars)` : '❌ NOT SET',
+        WHATSAPP_VERIFY_TOKEN: verifyToken
+          ? `✅ Set (${verifyToken.length} chars, starts: "${verifyToken.slice(0, 5)}...")`
+          : '❌ NOT SET',
+        WHATSAPP_PHONE_NUMBER_ID: phoneId
+          ? `✅ Set (${phoneId})`
+          : '❌ NOT SET',
+        WHATSAPP_API_TOKEN: apiToken
+          ? `✅ Set (${apiToken.length} chars)`
+          : '❌ NOT SET',
       },
-      webhook_url: 'https://pairley-backend2026.onrender.com/api/whatsapp/webhook',
+      webhook_url:
+        'https://pairley-backend2026.onrender.com/api/whatsapp/webhook',
     });
   }
 
@@ -55,8 +71,9 @@ export class WhatsappController {
     @Res() res: Response,
   ) {
     // ── Load the expected token from environment ──────────────
-    const expectedToken = this.configService.get<string>('WHATSAPP_VERIFY_TOKEN')
-      || process.env.WHATSAPP_VERIFY_TOKEN;   // direct fallback in case ConfigService misses
+    const expectedToken =
+      this.configService.get<string>('WHATSAPP_VERIFY_TOKEN') ||
+      process.env.WHATSAPP_VERIFY_TOKEN; // direct fallback in case ConfigService misses
 
     // ── Full debug log (safe — only logs token length, not value) ──
     this.logger.log('═══════════════ WEBHOOK VERIFICATION ═══════════════');
@@ -88,7 +105,9 @@ export class WhatsappController {
 
     // ── Failure cases ─────────────────────────────────────────
     if (mode !== 'subscribe') {
-      this.logger.warn(`❌ Verification failed — hub.mode is "${mode}", expected "subscribe"`);
+      this.logger.warn(
+        `❌ Verification failed — hub.mode is "${mode}", expected "subscribe"`,
+      );
     } else {
       this.logger.warn('❌ Verification failed — verify token MISMATCH');
       this.logger.warn(`   Received : "${verifyToken}"`);
@@ -97,10 +116,46 @@ export class WhatsappController {
 
     return res.status(HttpStatus.FORBIDDEN).json({
       error: 'Verification failed',
-      reason: mode !== 'subscribe'
-        ? `hub.mode must be "subscribe", got "${mode}"`
-        : 'verify token does not match',
+      reason:
+        mode !== 'subscribe'
+          ? `hub.mode must be "subscribe", got "${mode}"`
+          : 'verify token does not match',
     });
+  }
+
+  // Verifies Meta's X-Hub-Signature-256 header: HMAC-SHA256 of the raw
+  // request body, keyed with the app secret. Must run over the exact bytes
+  // Meta signed (req.rawBody, captured in main.ts's express.json `verify`
+  // callback) — HMACing a re-serialization of the parsed JSON body would
+  // not reliably match. Fails open (logs, doesn't reject) when
+  // WHATSAPP_APP_SECRET isn't configured, so this doesn't take the live
+  // webhook down before that env var is added — see MONITORING_SETUP.md.
+  private isValidSignature(req: Request): boolean {
+    const appSecret = this.configService.get<string>('WHATSAPP_APP_SECRET');
+    if (!appSecret) {
+      this.logger.warn(
+        'WHATSAPP_APP_SECRET not configured — skipping webhook signature verification (fail-open)',
+      );
+      return true;
+    }
+
+    const signatureHeader = req.headers['x-hub-signature-256'];
+    const rawBody = (req as Request & { rawBody?: Buffer }).rawBody;
+    if (typeof signatureHeader !== 'string' || !rawBody) {
+      this.logger.warn(
+        'Webhook POST missing signature header or raw body — rejecting',
+      );
+      return false;
+    }
+
+    const expected =
+      'sha256=' + createHmac('sha256', appSecret).update(rawBody).digest('hex');
+    const expectedBuf = Buffer.from(expected);
+    const receivedBuf = Buffer.from(signatureHeader);
+    if (expectedBuf.length !== receivedBuf.length) {
+      return false;
+    }
+    return timingSafeEqual(expectedBuf, receivedBuf);
   }
 
   // ─────────────────────────────────────────────────────────────
@@ -108,7 +163,16 @@ export class WhatsappController {
   // POST /api/whatsapp/webhook
   // ─────────────────────────────────────────────────────────────
   @Post('webhook')
-  async receiveWebhook(@Body() payload: any, @Res() res: Response) {
+  async receiveWebhook(
+    @Body() payload: any,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    if (!this.isValidSignature(req)) {
+      res.status(HttpStatus.FORBIDDEN).json({ error: 'Invalid signature' });
+      return;
+    }
+
     // ── Immediately respond 200 — Meta requires fast ACK ─────
     // If we don't respond within 20 seconds, Meta retries
     res.status(HttpStatus.OK).json({ status: 'received' });

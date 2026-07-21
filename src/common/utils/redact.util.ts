@@ -101,6 +101,7 @@ const SENSITIVE_FIELD_NAMES = [
   'google_api_key',
   'whatsapp_access_token',
   'whatsapp_api_token',
+  'whatsapp_app_secret',
   'meta_token',
   'firebase_token',
   'fcm_token',
