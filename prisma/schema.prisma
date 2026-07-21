@@ -219,9 +219,10 @@ model Business {
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
 
-  subscriptions Subscription[]
-  offers        Offer[]
-  ratings       Rating[]
+  subscriptions  Subscription[]
+  offers         Offer[]
+  ratings        Rating[]
+  claim_requests ClaimRequest[]
 
   @@map("businesses")
 }
@@ -500,4 +501,42 @@ model ImportJob {
 
   @@index([status, created_at])
   @@map("import_jobs")
+}
+
+// Module 9 Phase 4 — admin-assisted merchant claim flow for UNCLAIMED
+// (AI-imported) businesses. PENDING_ADMIN_REVIEW -> ADMIN_APPROVED ->
+// COMPLETED is the happy path; ADMIN_REJECTED and EXPIRED are terminal
+// (EXPIRED also covers "too many failed OTP attempts" — see
+// claim-request.service.ts). Every status transition is final except the
+// initial PENDING_ADMIN_REVIEW -> ADMIN_APPROVED/ADMIN_REJECTED branch —
+// once a token leaves ADMIN_APPROVED it can never be used again, which is
+// the single-use/replay-protection mechanism, enforced in the service
+// layer (not achievable via schema constraints alone).
+enum ClaimRequestStatus {
+  PENDING_ADMIN_REVIEW
+  ADMIN_APPROVED
+  ADMIN_REJECTED
+  COMPLETED
+  EXPIRED
+}
+
+model ClaimRequest {
+  id               String             @id @default(uuid())
+  business_id      String
+  mobile           String
+  claim_token      String             @unique
+  status           ClaimRequestStatus @default(PENDING_ADMIN_REVIEW)
+  token_expires_at DateTime
+  otp_attempts     Int                @default(0)
+  reviewed_by      String? // admin id
+  reviewed_at      DateTime?
+  rejection_reason String?
+  completed_at     DateTime?
+  created_at       DateTime           @default(now())
+  updated_at       DateTime           @updatedAt
+
+  business Business @relation(fields: [business_id], references: [id], onDelete: Cascade)
+
+  @@index([business_id, status])
+  @@map("claim_requests")
 }
