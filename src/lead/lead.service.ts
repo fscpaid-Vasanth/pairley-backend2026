@@ -27,10 +27,29 @@ export class LeadService {
       where.status = filters.status as LeadStatus;
     }
 
-    return this.prisma.lead.findMany({
+    const leads = await this.prisma.lead.findMany({
       where,
       orderBy: { created_at: 'desc' },
     });
+
+    // Module 8 — attach each lead's WhatsApp alert delivery status. No
+    // @relation between Lead and WhatsAppMessage by design (both are
+    // standalone logs, see their schema comments), so this is a batched
+    // second query + in-memory join rather than an `include`.
+    if (leads.length > 0) {
+      const messages = await this.prisma.whatsAppMessage.findMany({
+        where: { related_lead_id: { in: leads.map((l) => l.id) } },
+      });
+      const statusByLeadId = new Map(
+        messages.map((m) => [m.related_lead_id, m.status]),
+      );
+      return leads.map((lead) => ({
+        ...lead,
+        whatsappStatus: statusByLeadId.get(lead.id) ?? null,
+      }));
+    }
+
+    return leads;
   }
 
   async getLead(businessId: string, leadId: string) {
