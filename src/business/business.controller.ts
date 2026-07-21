@@ -29,6 +29,9 @@ import {
   IsIn,
   IsNumber,
   IsObject,
+  IsBoolean,
+  IsNotEmpty,
+  Length,
   Min,
   Max,
 } from 'class-validator';
@@ -39,7 +42,9 @@ import {
 // those to this endpoint now fails validation instead of being silently
 // accepted and stripped downstream. logo/cover_image/gallery_images are
 // deliberately not here either — those go through the dedicated media
-// upload endpoints below, not this JSON profile update.
+// upload endpoints below, not this JSON profile update. lead_whatsapp_number/
+// lead_whatsapp_verified are also deliberately excluded — those go through
+// the dedicated OTP-gated endpoints below (Module 8), not a plain field set.
 class UpdateBusinessProfileDto {
   @IsString() @IsOptional() business_name?: string;
   @IsString() @IsOptional() business_type?: string;
@@ -58,6 +63,7 @@ class UpdateBusinessProfileDto {
   @IsString() @IsOptional() facebook?: string;
   @IsString() @IsOptional() whatsapp?: string;
   @IsString() @IsOptional() support_number?: string;
+  @IsBoolean() @IsOptional() notify_whatsapp?: boolean;
   @IsObject() @IsOptional() store_timing?: Record<
     string,
     { open?: string; close?: string; isClosed?: boolean }
@@ -67,6 +73,15 @@ class UpdateBusinessProfileDto {
   @IsIn(['MANUAL', 'AUTOMATIC']) @IsOptional() lead_acceptance_mode?:
     | 'MANUAL'
     | 'AUTOMATIC';
+}
+
+class SetWhatsappNumberDto {
+  // Optional/empty clears back to the default (Business.mobile).
+  @IsString() @IsOptional() number?: string;
+}
+
+class VerifyWhatsappNumberDto {
+  @IsString() @IsNotEmpty() @Length(6, 6) code: string;
 }
 
 @Controller('business')
@@ -156,6 +171,35 @@ export class BusinessController {
     @Body() body: UpdateBusinessProfileDto,
   ) {
     return this.businessService.updateProfile(user.sub, body);
+  }
+
+  // ── Module 8: WhatsApp lead-alert number + verification ──────────────
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.BUSINESS)
+  @Get('whatsapp-status')
+  async getWhatsappStatus(@CurrentUser() user: { sub: string }) {
+    return this.businessService.getWhatsappStatus(user.sub);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.BUSINESS)
+  @Put('whatsapp-number')
+  async setWhatsappNumber(
+    @CurrentUser() user: { sub: string },
+    @Body() body: SetWhatsappNumberDto,
+  ) {
+    return this.businessService.setLeadWhatsappNumber(user.sub, body.number);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.BUSINESS)
+  @Post('whatsapp-number/verify')
+  async verifyWhatsappNumber(
+    @CurrentUser() user: { sub: string },
+    @Body() body: VerifyWhatsappNumberDto,
+  ) {
+    return this.businessService.verifyLeadWhatsappNumber(user.sub, body.code);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

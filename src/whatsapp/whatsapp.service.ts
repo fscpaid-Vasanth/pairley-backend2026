@@ -1,6 +1,38 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
+export interface WhatsAppSendResult {
+  success: boolean;
+  error?: string;
+  messageId?: string;
+}
+
+// Meta Cloud API's /messages response shape — narrow, typed cast target for
+// response.json() (which fetch types as Promise<any>) so send-result
+// handling below doesn't propagate unsafe-any.
+interface MetaSendResponse {
+  messages?: { id?: string }[];
+}
+
+// Business's effective lead-alert WhatsApp number/verification state.
+// When a merchant hasn't set an explicit lead_whatsapp_number, their
+// already OTP-verified registration `mobile` is used and treated as
+// verified — see the Business model's schema comment (Module 8).
+export function resolveLeadWhatsappNumber(business: {
+  mobile: string;
+  lead_whatsapp_number: string | null;
+  lead_whatsapp_verified: boolean;
+}): { number: string; verified: boolean; isDefault: boolean } {
+  if (!business.lead_whatsapp_number) {
+    return { number: business.mobile, verified: true, isDefault: true };
+  }
+  return {
+    number: business.lead_whatsapp_number,
+    verified: business.lead_whatsapp_verified,
+    isDefault: false,
+  };
+}
+
 export interface InboundWhatsAppMessage {
   from: string; // Sender's WhatsApp number (international format, e.g. "919876543210")
   id: string; // Message ID
@@ -145,21 +177,30 @@ export class WhatsappService {
     );
   }
 
+  // The number Pairley's own WhatsApp Business account sends from —
+  // configured once, not merchant-specific.
+  getSenderPhoneNumberId(): string | undefined {
+    return this.configService.get<string>('WHATSAPP_PHONE_NUMBER_ID');
+  }
+
   /**
-   * Send a plain text message via WhatsApp Cloud API
+   * Send a plain text message via WhatsApp Cloud API. Returns a result
+   * instead of throwing — callers (OTP send, lead alerts) need to log
+   * SENT/FAILED without a failure ever propagating up and blocking
+   * whatever triggered the send (e.g. lead creation).
    */
   async sendTextMessage(
     to: string,
     phoneNumberId: string,
     text: string,
-  ): Promise<void> {
+  ): Promise<WhatsAppSendResult> {
     // Use API token (app-level) first, then access token as fallback
     const token =
       this.configService.get<string>('WHATSAPP_API_TOKEN') ||
       this.configService.get<string>('WHATSAPP_ACCESS_TOKEN');
     if (!token) {
       this.logger.warn('No WhatsApp token configured — skipping send');
-      return;
+      return { success: false, error: 'No WhatsApp token configured' };
     }
 
     const url = `https://graph.facebook.com/${this.apiVersion}/${phoneNumberId}/messages`;
@@ -181,19 +222,19 @@ export class WhatsappService {
       });
 
       if (!response.ok) {
-        const err = await response.json();
-        this.logger.error(
-          `Failed to send WhatsApp message: ${JSON.stringify(err)}`,
-        );
-        return;
+        const err: unknown = await response.json();
+        const errorMsg = JSON.stringify(err);
+        this.logger.error(`Failed to send WhatsApp message: ${errorMsg}`);
+        return { success: false, error: errorMsg };
       }
 
-      const data = await response.json();
-      this.logger.log(
-        `✅ WhatsApp message sent | message_id=${data?.messages?.[0]?.id}`,
-      );
+      const data = (await response.json()) as MetaSendResponse;
+      const messageId = data.messages?.[0]?.id;
+      this.logger.log(`✅ WhatsApp message sent | message_id=${messageId}`);
+      return { success: true, messageId };
     } catch (error) {
       this.logger.error('Error sending WhatsApp message:', error);
+      return { success: false, error: error.message };
     }
   }
 
@@ -206,13 +247,13 @@ export class WhatsappService {
     templateName: string,
     languageCode: string = 'en',
     components: any[] = [],
-  ): Promise<void> {
+  ): Promise<WhatsAppSendResult> {
     const token =
       this.configService.get<string>('WHATSAPP_API_TOKEN') ||
       this.configService.get<string>('WHATSAPP_ACCESS_TOKEN');
     if (!token) {
       this.logger.warn('No WhatsApp token configured — skipping send');
-      return;
+      return { success: false, error: 'No WhatsApp token configured' };
     }
 
     const url = `https://graph.facebook.com/${this.apiVersion}/${phoneNumberId}/messages`;
@@ -237,14 +278,19 @@ export class WhatsappService {
       });
 
       if (!response.ok) {
-        const err = await response.json();
-        this.logger.error(`Failed to send template: ${JSON.stringify(err)}`);
-        return;
+        const err: unknown = await response.json();
+        const errorMsg = JSON.stringify(err);
+        this.logger.error(`Failed to send template: ${errorMsg}`);
+        return { success: false, error: errorMsg };
       }
 
+      const data = (await response.json()) as MetaSendResponse;
+      const messageId = data.messages?.[0]?.id;
       this.logger.log(`✅ WhatsApp template "${templateName}" sent to ${to}`);
+      return { success: true, messageId };
     } catch (error) {
       this.logger.error('Error sending WhatsApp template:', error);
+      return { success: false, error: error.message };
     }
   }
 }
