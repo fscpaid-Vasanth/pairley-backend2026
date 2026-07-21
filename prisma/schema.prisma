@@ -196,6 +196,16 @@ model Business {
   whatsapp             String?
   support_number       String?
 
+  // Module 8 — WhatsApp Business API lead alerts (distinct from the public
+  // storefront `whatsapp` field above). When null, code treats `mobile`
+  // (already OTP-verified at registration) as the effective number AND as
+  // verified — `lead_whatsapp_verified` only matters once a merchant sets
+  // an explicit override here. See whatsapp.service.ts's
+  // resolveLeadWhatsappNumber().
+  lead_whatsapp_number   String?
+  lead_whatsapp_verified Boolean @default(false)
+  notify_whatsapp        Boolean @default(true)
+
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
 
@@ -436,4 +446,25 @@ model PushToken {
   created_at DateTime @default(now())
 
   @@map("push_tokens")
+}
+
+// Module 8 — WhatsApp Business API send log. Standalone/no @relation fields,
+// matching Lead's precedent: a record of what was actually sent must survive
+// the business/customer/lead rows it references being later deleted.
+// v1 logs only SENT/FAILED — Meta's delivery/read-receipt webhook events are
+// deliberately deferred (see Module 8 STEP 1 decision).
+model WhatsAppMessage {
+  id              String   @id @default(uuid())
+  business_id     String?
+  customer_id     String?
+  direction       String // 'OUTBOUND' | 'INBOUND'
+  template        String? // template name; null for the existing inbound bot replies
+  to_number       String
+  status          String // 'SENT' | 'FAILED'
+  error           String?
+  related_lead_id String?
+  created_at      DateTime @default(now())
+
+  @@index([business_id, created_at])
+  @@map("whatsapp_messages")
 }
