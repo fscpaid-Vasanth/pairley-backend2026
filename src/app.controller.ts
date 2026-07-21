@@ -35,7 +35,16 @@ export class AppController {
   async getPublicStats() {
     try {
       const dealsListed = await this.prismaService.offer.count();
+      // "Live" (customer-visible right now) vs. dealsListed's all-time
+      // total — the landing page's stat counters need the former so they
+      // don't overstate current activity with historical/expired offers.
+      const liveOffers = await this.prismaService.offer.count({
+        where: { status: 'ACTIVE' },
+      });
       const usersPaired = await this.prismaService.customer.count();
+      const verifiedMerchants = await this.prismaService.business.count({
+        where: { verification_status: 'APPROVED' },
+      });
 
       // Calculate actual money saved based on matched offer interests (50% price savings per BOGO Match)
       const matchedInterests = await this.prismaService.offerInterest.findMany({
@@ -61,17 +70,24 @@ export class AppController {
 
       return {
         dealsListed,
+        liveOffers,
         usersPaired,
+        verifiedMerchants,
         moneySaved,
         matchRate,
       };
     } catch (err) {
       console.error('Failed to calculate public stats:', err);
+      // Honest fallback — this endpoint backs the landing page's public
+      // trust counters (Module 9 redesign); it must never fabricate
+      // traction numbers, including on error.
       return {
-        dealsListed: 120,
-        usersPaired: 240,
-        moneySaved: 120000,
-        matchRate: 95,
+        dealsListed: 0,
+        liveOffers: 0,
+        usersPaired: 0,
+        verifiedMerchants: 0,
+        moneySaved: 0,
+        matchRate: 0,
       };
     }
   }
