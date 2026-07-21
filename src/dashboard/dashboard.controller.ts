@@ -8,7 +8,6 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import * as Sentry from '@sentry/nestjs';
 import { DashboardService } from './dashboard.service';
 import { OfferService } from '../offer/offer.service';
 import { SystemHealthService } from '../common/services/system-health.service';
@@ -78,45 +77,6 @@ export class DashboardController {
   @Roles(Role.ADMIN)
   async getSystemHealth() {
     return this.systemHealthService.check();
-  }
-
-  // TEMPORARY — Module 7 Sentry verification only (see MONITORING_SETUP.md
-  // §7). Admin-gated rather than NODE_ENV-gated because there's no separate
-  // staging environment; this must be triggerable on the actual deployed
-  // instance where SENTRY_DSN is configured. Remove once the test exception
-  // is confirmed in Sentry.
-  @Get('admin/test-sentry-exception')
-  @Roles(Role.ADMIN)
-  async testSentryException() {
-    const error = new Error(
-      'Module 7 Sentry verification test exception — safe to ignore, this is intentional.',
-    );
-    // Explicit capture + flush, independent of SentryGlobalFilter, so we get
-    // a definitive send/fail signal back in the response body rather than
-    // needing to check Render's logs.
-    const eventId = Sentry.captureException(error);
-    const flushed = await Sentry.flush(5000);
-    return { eventId, flushed };
-  }
-
-  // TEMPORARY — diagnostic only, never returns the DSN itself. Remove
-  // alongside test-sentry-exception once verification is done.
-  @Get('admin/test-sentry-status')
-  @Roles(Role.ADMIN)
-  testSentryStatus() {
-    const client = Sentry.getClient();
-    return {
-      dsnEnvVarPresent: !!process.env.SENTRY_DSN,
-      dsnEnvVarLength: process.env.SENTRY_DSN?.length || 0,
-      sentryClientInitialized: !!client,
-      sentryClientOptions: client
-        ? {
-            environment: client.getOptions().environment,
-            release: client.getOptions().release,
-            dsnHost: client.getDsn()?.host,
-          }
-        : null,
-    };
   }
 
   @Get('admin/businesses')
