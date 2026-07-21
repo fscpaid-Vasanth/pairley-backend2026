@@ -5,6 +5,7 @@ import { ImportJobRepository } from './import-job.repository';
 import { UrlFetchService, UrlFetchError } from './url-fetch.service';
 import { ContentExtractionService } from './content-extraction.service';
 import { ConfidenceScoringService } from './confidence-scoring.service';
+import { CandidateOfferService } from './candidate-offer.service';
 
 // Reasons that represent routine, expected outcomes (a bad URL, an
 // unreachable or slow site, a blocked SSRF target) — logged as a warning
@@ -40,6 +41,7 @@ export class ImportOrchestrationService {
     private readonly urlFetchService: UrlFetchService,
     private readonly contentExtractionService: ContentExtractionService,
     private readonly confidenceScoringService: ConfidenceScoringService,
+    private readonly candidateOfferService: CandidateOfferService,
   ) {}
 
   async importFromWebsite(sourceUrl: string) {
@@ -58,6 +60,25 @@ export class ImportOrchestrationService {
       const fields = this.contentExtractionService.extract(html);
       const confidence = this.confidenceScoringService.score(fields);
 
+      // A candidate offer is only worth creating (and putting in front of
+      // an admin) if extraction found at least a title — anything with
+      // zero usable content isn't a reviewable "offer," just a failed
+      // scrape. Everything else proceeds regardless of how low the
+      // confidence is; that's exactly what the review queue is for.
+      let candidateOfferId: string | undefined;
+      let candidateBusinessId: string | undefined;
+      let warnings: string[] = [];
+      if (fields.title) {
+        const candidate = await this.candidateOfferService.createCandidate({
+          sourceUrl: finalUrl,
+          fields,
+          confidence,
+        });
+        candidateOfferId = candidate.offer.id;
+        candidateBusinessId = candidate.business.id;
+        warnings = candidate.warnings;
+      }
+
       const done = await this.importJobRepo.updateJobStatus(
         job.id,
         ImportJobStatus.DONE,
@@ -66,10 +87,18 @@ export class ImportOrchestrationService {
             ...fields,
             final_url: finalUrl,
             confidence_score: confidence,
+            candidate_created: Boolean(candidateOfferId),
+            warnings,
           },
+          ...(candidateOfferId ? { created_offer_id: candidateOfferId } : {}),
+          ...(candidateBusinessId
+            ? { created_business_id: candidateBusinessId }
+            : {}),
         },
       );
-      this.logger.log(`Import job ${job.id} done — confidence=${confidence}`);
+      this.logger.log(
+        `Import job ${job.id} done — confidence=${confidence}${candidateOfferId ? `, candidate offer=${candidateOfferId}` : ' (no candidate — no title extracted)'}`,
+      );
       return done;
     } catch (err) {
       const reason =

@@ -4,6 +4,7 @@ import { ImportOrchestrationService } from './import-orchestration.service';
 import { UrlFetchError, UrlFetchService } from './url-fetch.service';
 import { ImportJobRepository } from './import-job.repository';
 import { ContentExtractionService } from './content-extraction.service';
+import { CandidateOfferService } from './candidate-offer.service';
 
 jest.mock('@sentry/nestjs', () => ({
   captureException: jest.fn(),
@@ -21,6 +22,7 @@ describe('ImportOrchestrationService', () => {
   let urlFetchService: { fetchHtml: jest.Mock };
   let contentExtractionService: { extract: jest.Mock };
   let confidenceScoringService: { score: jest.Mock };
+  let candidateOfferService: { createCandidate: jest.Mock };
   let service: ImportOrchestrationService;
 
   const job = {
@@ -46,16 +48,24 @@ describe('ImportOrchestrationService', () => {
     urlFetchService = { fetchHtml: jest.fn() };
     contentExtractionService = { extract: jest.fn() };
     confidenceScoringService = { score: jest.fn() };
+    candidateOfferService = {
+      createCandidate: jest.fn().mockResolvedValue({
+        business: { id: 'business-1' },
+        offer: { id: 'offer-1' },
+        warnings: ['No price detected'],
+      }),
+    };
 
     service = new ImportOrchestrationService(
       importJobRepo as unknown as ImportJobRepository,
       urlFetchService as unknown as UrlFetchService,
       contentExtractionService as unknown as ContentExtractionService,
       confidenceScoringService,
+      candidateOfferService as unknown as CandidateOfferService,
     );
   });
 
-  it('transitions QUEUED -> PROCESSING -> DONE on a successful import', async () => {
+  it('transitions QUEUED -> PROCESSING -> DONE and creates a review candidate on a successful import with a title', async () => {
     urlFetchService.fetchHtml.mockResolvedValue({
       html: '<title>X</title>',
       finalUrl: 'http://example.com',
@@ -79,11 +89,20 @@ describe('ImportOrchestrationService', () => {
       job.id,
       ImportJobStatus.PROCESSING,
     );
+    expect(candidateOfferService.createCandidate).toHaveBeenCalledWith({
+      sourceUrl: 'http://example.com',
+      fields: { title: 'X', description: null, image: null, price: null },
+      confidence: 0.4,
+    });
+
     const donePatch = {
       extracted_fields: expect.objectContaining({
         title: 'X',
         confidence_score: 0.4,
+        candidate_created: true,
       }) as unknown,
+      created_offer_id: 'offer-1',
+      created_business_id: 'business-1',
     };
     expect(importJobRepo.updateJobStatus).toHaveBeenNthCalledWith(
       2,
@@ -96,6 +115,26 @@ describe('ImportOrchestrationService', () => {
       title: 'X',
       confidence_score: 0.4,
     });
+  });
+
+  it('does not create a candidate when extraction found no title', async () => {
+    urlFetchService.fetchHtml.mockResolvedValue({
+      html: '<p>nothing useful here</p>',
+      finalUrl: 'http://example.com',
+    });
+    contentExtractionService.extract.mockReturnValue({
+      title: null,
+      description: null,
+      image: null,
+      price: null,
+    });
+    confidenceScoringService.score.mockReturnValue(0);
+
+    const result = await service.importFromWebsite('http://example.com');
+
+    expect(candidateOfferService.createCandidate).not.toHaveBeenCalled();
+    expect(result.status).toBe(ImportJobStatus.DONE);
+    expect(result.extracted_fields).toMatchObject({ candidate_created: false });
   });
 
   it('transitions to FAILED on a known/expected failure (e.g. SSRF block) without calling Sentry', async () => {
@@ -140,6 +179,28 @@ describe('ImportOrchestrationService', () => {
     expect(result.status).toBe(ImportJobStatus.FAILED);
     expect(captureExceptionMock).toHaveBeenCalledTimes(1);
     expect(flushMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('transitions to FAILED and reports to Sentry when candidate creation itself fails unexpectedly', async () => {
+    urlFetchService.fetchHtml.mockResolvedValue({
+      html: '<title>X</title>',
+      finalUrl: 'http://example.com',
+    });
+    contentExtractionService.extract.mockReturnValue({
+      title: 'X',
+      description: null,
+      image: null,
+      price: null,
+    });
+    confidenceScoringService.score.mockReturnValue(0.4);
+    candidateOfferService.createCandidate.mockRejectedValue(
+      new Error('db write failed'),
+    );
+
+    const result = await service.importFromWebsite('http://example.com');
+
+    expect(result.status).toBe(ImportJobStatus.FAILED);
+    expect(captureExceptionMock).toHaveBeenCalledTimes(1);
   });
 
   it('records a meaningful error message distinguishing the failure reason', async () => {
