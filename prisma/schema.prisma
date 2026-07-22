@@ -597,6 +597,16 @@ model ClaimRequest {
   created_at       DateTime           @default(now())
   updated_at       DateTime           @updatedAt
 
+  // Module 12 Phase 1 — evidence-based self-service claims. Both additive;
+  // a claim submitted before this module (or with no evidence supplied)
+  // simply has claimant_name: null, evidence_urls: []. Deliberately a
+  // flexible String[] rather than named fields (aadhaar_photo-style) —
+  // claim evidence is plausibly a business registration certificate, a
+  // storefront photo, a GST document, a rental agreement, etc., and
+  // different merchants will have different combinations available.
+  claimant_name String?
+  evidence_urls String[] @default([])
+
   business Business @relation(fields: [business_id], references: [id], onDelete: Cascade)
 
   @@index([business_id, status])

@@ -3,6 +3,19 @@ import { ClaimRequestService } from './claim-request.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { OtpService } from '../common/services/otp.service';
 import { JwtService } from '@nestjs/jwt';
+import { StorageService } from '../common/services/storage.service';
+import { FileValidationService } from './file-validation.service';
+
+// A minimal real JPEG signature (FF D8 FF) followed by a few bytes — passes
+// FileValidationService's magic-byte check without needing a full valid image.
+const VALID_JPEG_BASE64 =
+  'data:image/jpeg;base64,' +
+  Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]).toString(
+    'base64',
+  );
+const NOT_A_JPEG_BASE64 =
+  'data:image/jpeg;base64,' +
+  Buffer.from('this is not an image').toString('base64');
 
 describe('ClaimRequestService', () => {
   let businessFindUnique: jest.Mock;
@@ -33,6 +46,8 @@ describe('ClaimRequestService', () => {
   };
   let otpService: { generateOtp: jest.Mock; sendOtp: jest.Mock };
   let jwtService: { sign: jest.Mock };
+  let storageService: { uploadBase64: jest.Mock };
+  let fileValidationService: FileValidationService;
   let service: ClaimRequestService;
 
   const unclaimedBusiness = {
@@ -114,11 +129,26 @@ describe('ClaimRequestService', () => {
       sendOtp: jest.fn().mockResolvedValue({ success: true }),
     };
     jwtService = { sign: jest.fn().mockReturnValue('signed-jwt') };
+    storageService = {
+      uploadBase64: jest
+        .fn()
+        .mockImplementation((_dataUri: string, folder: string, name: string) =>
+          Promise.resolve(`https://s3.example.com/${folder}/${name}`),
+        ),
+    };
+    // Real instance, not a mock — FileValidationService is a small, pure,
+    // already-well-tested-on-its-own service (Module 10); using the real
+    // thing here exercises the actual magic-byte checks against the test
+    // fixtures above, same reasoning as NormalizationService in the
+    // orchestration spec.
+    fileValidationService = new FileValidationService();
 
     service = new ClaimRequestService(
       prisma as unknown as PrismaService,
       otpService as unknown as OtpService,
       jwtService as unknown as JwtService,
+      storageService as unknown as StorageService,
+      fileValidationService,
     );
   });
 
@@ -177,6 +207,102 @@ describe('ClaimRequestService', () => {
       await expect(
         service.requestClaim('business-1', '9876543210'),
       ).rejects.toThrow('already in progress');
+    });
+
+    describe('with evidence (Module 12 Phase 1)', () => {
+      it('has no claimant_name/evidence_urls when neither is supplied — unchanged Module 9 behavior', async () => {
+        await service.requestClaim('business-1', '9876543210');
+        expect(claimRequestCreate).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              claimant_name: null,
+              evidence_urls: [],
+            }) as unknown,
+          }),
+        );
+        expect(storageService.uploadBase64).not.toHaveBeenCalled();
+      });
+
+      it('validates, uploads, and stores claimant_name + evidence_urls when supplied', async () => {
+        await service.requestClaim('business-1', '9876543210', 'Priya Sharma', [
+          VALID_JPEG_BASE64,
+        ]);
+        expect(storageService.uploadBase64).toHaveBeenCalledTimes(1);
+        expect(claimRequestCreate).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              claimant_name: 'Priya Sharma',
+              evidence_urls: [
+                'https://s3.example.com/claim-evidence/evidence-1.jpeg',
+              ],
+            }) as unknown,
+          }),
+        );
+      });
+
+      it('rejects evidence that fails the magic-byte signature check', async () => {
+        await expect(
+          service.requestClaim('business-1', '9876543210', 'Priya Sharma', [
+            NOT_A_JPEG_BASE64,
+          ]),
+        ).rejects.toThrow('Evidence rejected');
+        expect(storageService.uploadBase64).not.toHaveBeenCalled();
+        expect(claimRequestCreate).not.toHaveBeenCalled();
+      });
+
+      it('rejects a malformed (non-data-URI) evidence entry', async () => {
+        await expect(
+          service.requestClaim('business-1', '9876543210', 'Priya Sharma', [
+            'not-a-data-uri',
+          ]),
+        ).rejects.toThrow('base64 data URI');
+      });
+
+      it('rejects more than the maximum allowed evidence files', async () => {
+        const tooMany = Array(6).fill(VALID_JPEG_BASE64);
+        await expect(
+          service.requestClaim(
+            'business-1',
+            '9876543210',
+            'Priya Sharma',
+            tooMany,
+          ),
+        ).rejects.toThrow('at most 5 evidence files');
+        expect(storageService.uploadBase64).not.toHaveBeenCalled();
+      });
+
+      it('validates evidence before ever touching the database — reject-before-processing', async () => {
+        await expect(
+          service.requestClaim('business-1', '9876543210', 'Priya Sharma', [
+            NOT_A_JPEG_BASE64,
+          ]),
+        ).rejects.toThrow();
+        expect(businessFindUnique).not.toHaveBeenCalled();
+      });
+    });
+  });
+
+  describe('getRequestDetail (Module 12 Phase 1)', () => {
+    it('returns the full claim including business and evidence', async () => {
+      claimRequestFindUnique.mockResolvedValue({
+        ...approvedClaim,
+        claimant_name: 'Priya Sharma',
+        evidence_urls: [
+          'https://s3.example.com/claim-evidence/evidence-1.jpeg',
+        ],
+      });
+      const result = await service.getRequestDetail('claim-1');
+      expect(result.claimant_name).toBe('Priya Sharma');
+      expect(result.evidence_urls).toEqual([
+        'https://s3.example.com/claim-evidence/evidence-1.jpeg',
+      ]);
+    });
+
+    it('throws NotFound for a missing claim', async () => {
+      claimRequestFindUnique.mockResolvedValue(null);
+      await expect(service.getRequestDetail('missing')).rejects.toThrow(
+        'Claim request not found',
+      );
     });
   });
 

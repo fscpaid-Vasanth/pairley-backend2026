@@ -312,15 +312,21 @@ export class BusinessService {
     }
 
     if (files.aadhaar && files.aadhaar.length > 0) {
-      // Aadhaar number and file URL
-      updateData.aadhaar_number = await this.storageService.uploadFile(
+      // Module 12 Phase 1 — fixed: this was writing the uploaded file's
+      // URL into aadhaar_number (the text ID-number field), not
+      // aadhaar_photo (the document-image field) — googleUpsert() in
+      // auth.service.ts always used the correct field; this call site
+      // didn't. aadhaar_number is left untouched here — it's a separate,
+      // merchant-entered text value with no relation to the uploaded file.
+      updateData.aadhaar_photo = await this.storageService.uploadFile(
         files.aadhaar[0],
         'documents',
       );
     }
 
     if (files.pan && files.pan.length > 0) {
-      updateData.pan_number = await this.storageService.uploadFile(
+      // Same fix as aadhaar above.
+      updateData.pan_photo = await this.storageService.uploadFile(
         files.pan[0],
         'documents',
       );

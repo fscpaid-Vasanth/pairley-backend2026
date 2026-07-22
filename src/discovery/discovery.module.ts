@@ -44,6 +44,10 @@ import { ClaimAdminController } from './claim-admin.controller';
 // category/merchant-type/tag/keyword suggestions with full explainability
 // via a provider-agnostic EnrichmentProvider (today: rule-based only, no
 // AI/LLM — see enrichment-provider.ts).
+// Module 12 Phase 1 — ClaimRequestService gains evidence collection
+// (reuses FileValidationService for the same magic-byte checks Module 10
+// established, and StorageService for upload) on top of its existing
+// Module 9 request -> admin review -> OTP -> transfer state machine.
 @Module({
   imports: [AuthModule],
   controllers: [

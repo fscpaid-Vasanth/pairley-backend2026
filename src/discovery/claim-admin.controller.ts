@@ -38,6 +38,15 @@ export class ClaimAdminController {
     return this.claimRequestService.listRequests(parsed);
   }
 
+  // Module 12 Phase 1 — the evidence-viewer detail fetch (Phase 3 builds
+  // the UI against this). Placed before ':id/approve' etc. doesn't matter
+  // here since Nest matches by method+exact-vs-param segment, not
+  // declaration order, but kept alongside list() for readability.
+  @Get(':id')
+  get(@Param('id') id: string) {
+    return this.claimRequestService.getRequestDetail(id);
+  }
+
   @Put(':id/approve')
   approve(@Param('id') id: string, @CurrentUser() admin: { sub: string }) {
     return this.claimRequestService.approve(id, admin.sub);

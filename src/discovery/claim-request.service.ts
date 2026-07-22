@@ -10,17 +10,32 @@ import { randomBytes } from 'crypto';
 import { BusinessStatus, ClaimRequestStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { OtpService } from '../common/services/otp.service';
+import { StorageService } from '../common/services/storage.service';
+import { FileValidationService } from './file-validation.service';
+import { FileImportError } from './file-import.errors';
 
 const TOKEN_VALIDITY_DAYS = 7;
 const OTP_VALIDITY_MINUTES = 5;
 const MAX_OTP_ATTEMPTS = 5;
 const MOBILE_PATTERN = /^\d{10,15}$/;
+// A generous but bounded cap — evidence is a handful of documents/photos
+// (registration certificate, storefront photo, ID, etc.), not an
+// open-ended upload surface. Prevents one claim from becoming a large,
+// costly batch upload.
+const MAX_EVIDENCE_FILES = 5;
+const EVIDENCE_UPLOAD_FOLDER = 'claim-evidence';
+const DATA_URI_PATTERN = /^data:([^;]+);base64,(.+)$/;
 
 // Module 9 Phase 4 — admin-assisted claim flow, per the explicit decision:
 // merchant requests -> admin reviews -> OTP verification -> atomic
 // ownership transfer -> dashboard access. No fully self-service path exists
-// (deliberately — see Module 9 STEP 1 Decision 2). This service owns the
-// whole state machine; the two controllers (public ClaimController, admin
+// (deliberately — see Module 9 STEP 1 Decision 2).
+// Module 12 Phase 1 — evidence-based claims. The state machine is
+// unchanged; requestClaim() now additionally collects and validates
+// verification evidence, so the admin's review step (still mandatory,
+// still the only path to ADMIN_APPROVED) has something real to look at
+// instead of nothing but a mobile number. This service owns the whole
+// state machine; the two controllers (public ClaimController, admin
 // ClaimAdminController) are thin wrappers with no business logic of their
 // own, matching the separation-of-concerns pattern from Phases 2-3.
 @Injectable()
@@ -31,12 +46,33 @@ export class ClaimRequestService {
     private readonly prisma: PrismaService,
     private readonly otpService: OtpService,
     private readonly jwtService: JwtService,
+    private readonly storageService: StorageService,
+    private readonly fileValidationService: FileValidationService,
   ) {}
 
-  async requestClaim(businessId: string, mobile: string) {
+  async requestClaim(
+    businessId: string,
+    mobile: string,
+    claimantName?: string,
+    evidence?: string[],
+  ) {
     if (!MOBILE_PATTERN.test(mobile)) {
       throw new BadRequestException('Mobile number must be 10-15 digits');
     }
+    if (evidence && evidence.length > MAX_EVIDENCE_FILES) {
+      throw new BadRequestException(
+        `A claim can include at most ${MAX_EVIDENCE_FILES} evidence files`,
+      );
+    }
+
+    // Validate before touching the database at all — reject-before-processing,
+    // same discipline as Module 10's file-import pipeline. Uploading only
+    // happens after every file in the batch has passed validation, so a
+    // claim never ends up with some evidence uploaded and some silently
+    // dropped because a later file in the array failed.
+    const evidenceBuffers = (evidence ?? []).map((dataUri) =>
+      this.parseAndValidateEvidence(dataUri),
+    );
 
     const business = await this.prisma.business.findUnique({
       where: { id: businessId },
@@ -77,6 +113,22 @@ export class ClaimRequestService {
       );
     }
 
+    // Uploaded last, after every other cheap/synchronous check has already
+    // passed — no point paying for S3 writes on a request that was always
+    // going to be rejected for an unrelated reason (business already
+    // claimed, duplicate active claim, etc.).
+    const evidenceUrls = await Promise.all(
+      evidenceBuffers.map(({ buffer, mimetype }, i) =>
+        this.storageService.uploadBase64(
+          `data:${mimetype};base64,${buffer.toString('base64')}`,
+          EVIDENCE_UPLOAD_FOLDER,
+          this.fileValidationService.sanitizeFilename(
+            `evidence-${i + 1}.${mimetype.split('/')[1] || 'bin'}`,
+          ),
+        ),
+      ),
+    );
+
     const claimToken = randomBytes(32).toString('hex');
     const tokenExpiresAt = new Date(
       Date.now() + TOKEN_VALIDITY_DAYS * 24 * 60 * 60 * 1000,
@@ -88,6 +140,8 @@ export class ClaimRequestService {
         mobile,
         claim_token: claimToken,
         token_expires_at: tokenExpiresAt,
+        claimant_name: claimantName || null,
+        evidence_urls: evidenceUrls,
       },
     });
 
@@ -120,6 +174,22 @@ export class ClaimRequestService {
       },
       orderBy: { created_at: 'desc' },
     });
+  }
+
+  // Module 12 Phase 1 — a single-request detail fetch for the admin review
+  // UI (Phase 3 builds the actual evidence viewer against this). Kept
+  // separate from listRequests() rather than bloating every row of every
+  // page with the full business record, same reasoning as
+  // ReviewQueueService.getCandidate() vs listCandidates() in Module 11.
+  async getRequestDetail(id: string) {
+    const claim = await this.prisma.claimRequest.findUnique({
+      where: { id },
+      include: { business: true },
+    });
+    if (!claim) {
+      throw new NotFoundException('Claim request not found');
+    }
+    return claim;
   }
 
   async approve(claimRequestId: string, adminId: string) {
@@ -288,6 +358,38 @@ export class ClaimRequestService {
     });
 
     return { token, user: updatedBusiness, role: 'Business' };
+  }
+
+  // Reuses FileValidationService's exact magic-byte/mimetype/size checks
+  // (Module 10's standard) against the decoded buffer — the client-declared
+  // mimetype in the data URI is never trusted alone. Throws BadRequestException
+  // (not FileImportError) since claim evidence has no ImportJob to attach a
+  // machine-readable reason to; the human message is enough here.
+  private parseAndValidateEvidence(dataUri: string): {
+    buffer: Buffer;
+    mimetype: string;
+  } {
+    const match = dataUri.match(DATA_URI_PATTERN);
+    if (!match) {
+      throw new BadRequestException(
+        'Evidence must be a base64 data URI (data:<mimetype>;base64,<data>)',
+      );
+    }
+    const mimetype = match[1];
+    const buffer = Buffer.from(match[2], 'base64');
+    try {
+      this.fileValidationService.validate({
+        mimetype,
+        size: buffer.length,
+        buffer,
+      });
+    } catch (err) {
+      if (err instanceof FileImportError) {
+        throw new BadRequestException(`Evidence rejected: ${err.message}`);
+      }
+      throw err;
+    }
+    return { buffer, mimetype };
   }
 
   private async findByTokenOrThrow(claimToken: string) {
