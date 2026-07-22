@@ -9,6 +9,7 @@ import { ConfidenceScoringService } from './confidence-scoring.service';
 import { CandidateOfferService } from './candidate-offer.service';
 import { NormalizationService } from './normalization.service';
 import { DuplicateDetectionService } from './duplicate-detection.service';
+import { EnrichmentService } from './enrichment.service';
 import { FileValidationService } from './file-validation.service';
 import { FileImportError } from './file-import.errors';
 import { PdfTextService } from './pdf-text.service';
@@ -66,6 +67,7 @@ export class ImportOrchestrationService {
     private readonly candidateOfferService: CandidateOfferService,
     private readonly normalizationService: NormalizationService,
     private readonly duplicateDetectionService: DuplicateDetectionService,
+    private readonly enrichmentService: EnrichmentService,
     private readonly fileValidationService: FileValidationService,
     private readonly storageService: StorageService,
     private readonly pdfTextService: PdfTextService,
@@ -109,6 +111,10 @@ export class ImportOrchestrationService {
         candidateBusinessId = candidate.business.id;
         warnings = candidate.warnings;
         await this.duplicateDetectionService.detectAndFlag(
+          candidate.offer,
+          candidate.business,
+        );
+        await this.enrichmentService.enrichAndPersist(
           candidate.offer,
           candidate.business,
         );
@@ -279,6 +285,10 @@ export class ImportOrchestrationService {
         candidateBusinessId = candidate.business.id;
         warnings = candidate.warnings;
         await this.duplicateDetectionService.detectAndFlag(
+          candidate.offer,
+          candidate.business,
+        );
+        await this.enrichmentService.enrichAndPersist(
           candidate.offer,
           candidate.business,
         );

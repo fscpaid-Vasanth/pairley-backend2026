@@ -9,6 +9,9 @@ import { ConfidenceScoringService } from './confidence-scoring.service';
 import { CandidateOfferService } from './candidate-offer.service';
 import { NormalizationService } from './normalization.service';
 import { DuplicateDetectionService } from './duplicate-detection.service';
+import { EnrichmentProvider } from './enrichment-provider';
+import { RuleBasedEnrichmentProvider } from './rule-based-enrichment.provider';
+import { EnrichmentService } from './enrichment.service';
 import { FileValidationService } from './file-validation.service';
 import { PdfTextService } from './pdf-text.service';
 import { ImagePreprocessingService } from './image-preprocessing.service';
@@ -37,6 +40,10 @@ import { ClaimAdminController } from './claim-admin.controller';
 // Module 11 Phase 2 — DuplicateDetectionService runs after a candidate is
 // created, flagging (never merging/blocking) likely duplicate offers and
 // businesses for the admin to review.
+// Module 11 Phase 3 — EnrichmentService runs alongside it, producing
+// category/merchant-type/tag/keyword suggestions with full explainability
+// via a provider-agnostic EnrichmentProvider (today: rule-based only, no
+// AI/LLM — see enrichment-provider.ts).
 @Module({
   imports: [AuthModule],
   controllers: [
@@ -55,6 +62,11 @@ import { ClaimAdminController } from './claim-admin.controller';
     CandidateOfferService,
     NormalizationService,
     DuplicateDetectionService,
+    // Provider-agnostic binding (Decision 1) — swap to a real LLM provider
+    // later by changing only this line, e.g.
+    // { provide: EnrichmentProvider, useClass: OpenAiEnrichmentProvider }.
+    { provide: EnrichmentProvider, useClass: RuleBasedEnrichmentProvider },
+    EnrichmentService,
     FileValidationService,
     PdfTextService,
     ImagePreprocessingService,

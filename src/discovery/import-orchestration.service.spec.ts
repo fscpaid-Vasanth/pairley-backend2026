@@ -8,6 +8,7 @@ import { TextExtractionService } from './text-extraction.service';
 import { CandidateOfferService } from './candidate-offer.service';
 import { NormalizationService } from './normalization.service';
 import { DuplicateDetectionService } from './duplicate-detection.service';
+import { EnrichmentService } from './enrichment.service';
 import { FileImportError } from './file-import.errors';
 import { ImagePreprocessingService } from './image-preprocessing.service';
 import { OcrService } from './ocr.service';
@@ -35,6 +36,7 @@ describe('ImportOrchestrationService', () => {
   let candidateOfferService: { createCandidate: jest.Mock };
   let normalizationService: NormalizationService;
   let duplicateDetectionService: { detectAndFlag: jest.Mock };
+  let enrichmentService: { enrichAndPersist: jest.Mock };
   let fileValidationService: {
     validate: jest.Mock;
     sanitizeFilename: jest.Mock;
@@ -84,6 +86,9 @@ describe('ImportOrchestrationService', () => {
     duplicateDetectionService = {
       detectAndFlag: jest.fn().mockResolvedValue(undefined),
     };
+    enrichmentService = {
+      enrichAndPersist: jest.fn().mockResolvedValue(undefined),
+    };
     fileValidationService = {
       validate: jest.fn(),
       sanitizeFilename: jest.fn().mockImplementation((name: string) => name),
@@ -110,6 +115,7 @@ describe('ImportOrchestrationService', () => {
       candidateOfferService as unknown as CandidateOfferService,
       normalizationService,
       duplicateDetectionService as unknown as DuplicateDetectionService,
+      enrichmentService as unknown as EnrichmentService,
       fileValidationService,
       storageService as unknown as StorageService,
       pdfTextService,
@@ -180,6 +186,10 @@ describe('ImportOrchestrationService', () => {
         { id: 'offer-1' },
         { id: 'business-1' },
       );
+      expect(enrichmentService.enrichAndPersist).toHaveBeenCalledWith(
+        { id: 'offer-1' },
+        { id: 'business-1' },
+      );
     });
 
     it('does not create a candidate when extraction found no title', async () => {
@@ -199,6 +209,7 @@ describe('ImportOrchestrationService', () => {
 
       expect(candidateOfferService.createCandidate).not.toHaveBeenCalled();
       expect(duplicateDetectionService.detectAndFlag).not.toHaveBeenCalled();
+      expect(enrichmentService.enrichAndPersist).not.toHaveBeenCalled();
       expect(result.status).toBe(ImportJobStatus.DONE);
       expect(result.extracted_fields).toMatchObject({
         candidate_created: false,
@@ -352,6 +363,10 @@ describe('ImportOrchestrationService', () => {
         expect.objectContaining({ created_offer_id: 'offer-1' }) as unknown,
       );
       expect(duplicateDetectionService.detectAndFlag).toHaveBeenCalledWith(
+        { id: 'offer-1' },
+        { id: 'business-1' },
+      );
+      expect(enrichmentService.enrichAndPersist).toHaveBeenCalledWith(
         { id: 'offer-1' },
         { id: 'business-1' },
       );
