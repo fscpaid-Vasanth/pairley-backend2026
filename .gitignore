@@ -6,3 +6,8 @@ node_modules
 dist/
 pre_module1_backup_*.json
 pre_module2_backup_*.json
+
+# tesseract.js downloads its OCR language model to cwd on first use
+# (Module 10) — a runtime cache artifact, not source; re-downloaded
+# automatically wherever the app runs.
+*.traineddata

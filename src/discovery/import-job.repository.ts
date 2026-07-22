@@ -25,6 +25,8 @@ export class ImportJobRepository {
         | 'extracted_fields'
         | 'created_business_id'
         | 'created_offer_id'
+        | 'source_url'
+        | 'source_type'
       >
     >,
   ) {

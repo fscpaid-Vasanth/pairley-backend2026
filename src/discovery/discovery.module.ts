@@ -7,6 +7,9 @@ import { TextExtractionService } from './text-extraction.service';
 import { OcrService } from './ocr.service';
 import { ConfidenceScoringService } from './confidence-scoring.service';
 import { CandidateOfferService } from './candidate-offer.service';
+import { FileValidationService } from './file-validation.service';
+import { PdfTextService } from './pdf-text.service';
+import { ImagePreprocessingService } from './image-preprocessing.service';
 import { ImportOrchestrationService } from './import-orchestration.service';
 import { ReviewQueueService } from './review-queue.service';
 import { ClaimRequestService } from './claim-request.service';
@@ -19,11 +22,12 @@ import { ClaimAdminController } from './claim-admin.controller';
 // pipeline; Phase 3 added the review queue; Phase 4 adds the admin-assisted
 // merchant claim flow (ClaimRequestService owns the request -> admin
 // review -> OTP -> atomic ownership transfer state machine).
-// Module 10 Phase 1 — OcrService (tesseract.js behind a clean interface,
-// swappable for AWS Textract later without touching any other file) and
-// TextExtractionService (ContentExtractionService's plain-text sibling) are
-// foundational pieces with no caller yet; the file-upload endpoint that
-// wires them into the pipeline lands in Phase 2.
+// Module 10 — poster/PDF import. Phase 1 added OcrService/
+// TextExtractionService as foundational pieces with no caller yet; Phase 2
+// wires them into a real endpoint (FileValidationService, PdfTextService,
+// ImagePreprocessingService, and ImportOrchestrationService.importFromFile).
+// StorageService (S3 upload) is injected from the @Global() CommonModule,
+// not imported here explicitly.
 @Module({
   imports: [AuthModule],
   controllers: [
@@ -40,6 +44,9 @@ import { ClaimAdminController } from './claim-admin.controller';
     OcrService,
     ConfidenceScoringService,
     CandidateOfferService,
+    FileValidationService,
+    PdfTextService,
+    ImagePreprocessingService,
     ImportOrchestrationService,
     ReviewQueueService,
     ClaimRequestService,
