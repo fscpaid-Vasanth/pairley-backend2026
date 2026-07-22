@@ -23,6 +23,12 @@ export function deriveReviewStatus(offer: {
   return 'REVIEW_REQUIRED';
 }
 
+type BusinessDuplicateFields = {
+  duplicate_of_business_id: string | null;
+  duplicate_score: number | null;
+  duplicate_reasons: string[];
+};
+
 // Self-contained on the offer's own already-persisted fields — no lookup
 // against the originating ImportJob needed, since CandidateOfferService
 // bakes its placeholder defaults into the offer row itself. Kept in sync
@@ -32,6 +38,8 @@ function computeExtractionWarnings(offer: {
   description: string;
   cover_image: string | null;
   confidence_score: number | null;
+  duplicate_of_offer_id: string | null;
+  business?: BusinessDuplicateFields | null;
 }): string[] {
   const warnings: string[] = [];
   if (offer.original_price === 0) warnings.push('No price detected');
@@ -40,6 +48,15 @@ function computeExtractionWarnings(offer: {
     warnings.push('No description detected');
   if (offer.confidence_score !== null && offer.confidence_score < 0.5) {
     warnings.push('Low overall confidence — review carefully');
+  }
+  // Module 11 Phase 2 — recommendation only (Decision 4): a warning, never
+  // a block. The admin sees this alongside every other extraction warning
+  // and always makes the final call.
+  if (offer.duplicate_of_offer_id) {
+    warnings.push('Possible duplicate offer detected — please verify');
+  }
+  if (offer.business?.duplicate_of_business_id) {
+    warnings.push('Possible duplicate business detected — please verify');
   }
   warnings.push('Category defaulted — please verify');
   return warnings;
@@ -52,8 +69,10 @@ const REVIEW_STATUS_WHERE: Record<ReviewStatus, Prisma.OfferWhereInput> = {
   TAKEN_DOWN: { review_required: false, status: OfferStatus.ARCHIVED },
 };
 
+type CandidateBusiness = { business_name: string } & BusinessDuplicateFields;
+
 function toCandidateSummary(
-  offer: Offer & { business: { business_name: string } | null },
+  offer: Offer & { business: CandidateBusiness | null },
 ) {
   return {
     id: offer.id,
@@ -74,6 +93,15 @@ function toCandidateSummary(
     // WEBSITE candidates (it's the source webpage, not an image/PDF) —
     // the frontend only renders a preview when source is PDF/POSTER.
     source_file_url: offer.original_import_url,
+    // Module 11 Phase 2 — recommendation only, never auto-merged/rejected
+    // (Decision 4). duplicate_of_offer_id is null unless
+    // DuplicateDetectionService found a match above threshold.
+    duplicate_of_offer_id: offer.duplicate_of_offer_id,
+    duplicate_score: offer.duplicate_score,
+    duplicate_reasons: offer.duplicate_reasons,
+    business_duplicate_of_id: offer.business?.duplicate_of_business_id ?? null,
+    business_duplicate_score: offer.business?.duplicate_score ?? null,
+    business_duplicate_reasons: offer.business?.duplicate_reasons ?? [],
   };
 }
 
@@ -123,7 +151,16 @@ export class ReviewQueueService {
     const [items, total] = await this.prisma.$transaction([
       this.prisma.offer.findMany({
         where,
-        include: { business: { select: { business_name: true } } },
+        include: {
+          business: {
+            select: {
+              business_name: true,
+              duplicate_of_business_id: true,
+              duplicate_score: true,
+              duplicate_reasons: true,
+            },
+          },
+        },
         orderBy: { imported_at: 'desc' },
         skip: (page - 1) * pageSize,
         take: pageSize,
@@ -218,7 +255,7 @@ export class ReviewQueueService {
         'This offer was not AI-imported and is not part of the review queue',
       );
     }
-    return offer as Offer & { business: { business_name: string } | null };
+    return offer as Offer & { business: CandidateBusiness | null };
   }
 
   private async transition(

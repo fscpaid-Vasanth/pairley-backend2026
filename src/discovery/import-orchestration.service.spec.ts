@@ -7,6 +7,7 @@ import { ContentExtractionService } from './content-extraction.service';
 import { TextExtractionService } from './text-extraction.service';
 import { CandidateOfferService } from './candidate-offer.service';
 import { NormalizationService } from './normalization.service';
+import { DuplicateDetectionService } from './duplicate-detection.service';
 import { FileImportError } from './file-import.errors';
 import { ImagePreprocessingService } from './image-preprocessing.service';
 import { OcrService } from './ocr.service';
@@ -33,6 +34,7 @@ describe('ImportOrchestrationService', () => {
   let confidenceScoringService: { score: jest.Mock };
   let candidateOfferService: { createCandidate: jest.Mock };
   let normalizationService: NormalizationService;
+  let duplicateDetectionService: { detectAndFlag: jest.Mock };
   let fileValidationService: {
     validate: jest.Mock;
     sanitizeFilename: jest.Mock;
@@ -79,6 +81,9 @@ describe('ImportOrchestrationService', () => {
     // here keeps these orchestration tests focused on wiring/sequencing
     // while still exercising real normalize() output.
     normalizationService = new NormalizationService();
+    duplicateDetectionService = {
+      detectAndFlag: jest.fn().mockResolvedValue(undefined),
+    };
     fileValidationService = {
       validate: jest.fn(),
       sanitizeFilename: jest.fn().mockImplementation((name: string) => name),
@@ -104,6 +109,7 @@ describe('ImportOrchestrationService', () => {
       confidenceScoringService,
       candidateOfferService as unknown as CandidateOfferService,
       normalizationService,
+      duplicateDetectionService as unknown as DuplicateDetectionService,
       fileValidationService,
       storageService as unknown as StorageService,
       pdfTextService,
@@ -170,6 +176,10 @@ describe('ImportOrchestrationService', () => {
         title: 'X',
         confidence_score: 0.4,
       });
+      expect(duplicateDetectionService.detectAndFlag).toHaveBeenCalledWith(
+        { id: 'offer-1' },
+        { id: 'business-1' },
+      );
     });
 
     it('does not create a candidate when extraction found no title', async () => {
@@ -188,6 +198,7 @@ describe('ImportOrchestrationService', () => {
       const result = await service.importFromWebsite('http://example.com');
 
       expect(candidateOfferService.createCandidate).not.toHaveBeenCalled();
+      expect(duplicateDetectionService.detectAndFlag).not.toHaveBeenCalled();
       expect(result.status).toBe(ImportJobStatus.DONE);
       expect(result.extracted_fields).toMatchObject({
         candidate_created: false,
@@ -339,6 +350,10 @@ describe('ImportOrchestrationService', () => {
         job.id,
         ImportJobStatus.DONE,
         expect.objectContaining({ created_offer_id: 'offer-1' }) as unknown,
+      );
+      expect(duplicateDetectionService.detectAndFlag).toHaveBeenCalledWith(
+        { id: 'offer-1' },
+        { id: 'business-1' },
       );
     });
 

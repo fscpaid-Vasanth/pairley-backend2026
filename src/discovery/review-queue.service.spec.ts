@@ -47,7 +47,15 @@ describe('ReviewQueueService', () => {
     description: 'No description available.',
     cover_image: null,
     original_import_url: 'https://example.com/',
-    business: { business_name: 'example.com (imported)' },
+    duplicate_of_offer_id: null,
+    duplicate_score: null,
+    duplicate_reasons: [],
+    business: {
+      business_name: 'example.com (imported)',
+      duplicate_of_business_id: null,
+      duplicate_score: null,
+      duplicate_reasons: [],
+    },
   };
 
   beforeEach(() => {
@@ -118,6 +126,82 @@ describe('ReviewQueueService', () => {
       await service.listCandidates({ page: 1, pageSize: 500 });
       expect(offerFindMany).toHaveBeenCalledWith(
         expect.objectContaining({ take: 100 }),
+      );
+    });
+
+    it('requests the business duplicate fields alongside business_name (Module 11 Phase 2)', async () => {
+      await service.listCandidates({ page: 1, pageSize: 20 });
+      expect(offerFindMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: {
+            business: {
+              select: {
+                business_name: true,
+                duplicate_of_business_id: true,
+                duplicate_score: true,
+                duplicate_reasons: true,
+              },
+            },
+          },
+        }) as unknown,
+      );
+    });
+
+    it('surfaces offer-level duplicate fields and warning when flagged', async () => {
+      offerFindMany.mockResolvedValue([
+        {
+          ...candidateOffer,
+          duplicate_of_offer_id: 'offer-original',
+          duplicate_score: 0.82,
+          duplicate_reasons: ['Title is an exact or near-exact match'],
+        },
+      ]);
+      const result = await service.listCandidates({ page: 1, pageSize: 20 });
+      expect(result.items[0]).toMatchObject({
+        duplicate_of_offer_id: 'offer-original',
+        duplicate_score: 0.82,
+        duplicate_reasons: ['Title is an exact or near-exact match'],
+      });
+      expect(result.items[0].warnings).toContain(
+        'Possible duplicate offer detected — please verify',
+      );
+    });
+
+    it('surfaces business-level duplicate fields and warning when flagged', async () => {
+      offerFindMany.mockResolvedValue([
+        {
+          ...candidateOffer,
+          business: {
+            ...candidateOffer.business,
+            duplicate_of_business_id: 'business-original',
+            duplicate_score: 0.7,
+            duplicate_reasons: [
+              'Business name is an exact or near-exact match',
+            ],
+          },
+        },
+      ]);
+      const result = await service.listCandidates({ page: 1, pageSize: 20 });
+      expect(result.items[0]).toMatchObject({
+        business_duplicate_of_id: 'business-original',
+        business_duplicate_score: 0.7,
+        business_duplicate_reasons: [
+          'Business name is an exact or near-exact match',
+        ],
+      });
+      expect(result.items[0].warnings).toContain(
+        'Possible duplicate business detected — please verify',
+      );
+    });
+
+    it('omits both duplicate warnings when nothing was flagged — unchanged Module 9/10 behavior', async () => {
+      const result = await service.listCandidates({ page: 1, pageSize: 20 });
+      expect(result.items[0].duplicate_of_offer_id).toBeNull();
+      expect(result.items[0].warnings).not.toContain(
+        'Possible duplicate offer detected — please verify',
+      );
+      expect(result.items[0].warnings).not.toContain(
+        'Possible duplicate business detected — please verify',
       );
     });
   });

@@ -16,8 +16,10 @@ const CANDIDATE_VALIDITY_DAYS = 30;
 // No category-classification logic exists yet (Module 9 v1, deterministic
 // extraction only) — every candidate defaults here and the admin corrects
 // it during review. Matches the 12 real category ids in
-// offer.controller.ts's OFFER_CATEGORIES.
-const DEFAULT_CATEGORY = 'shopping';
+// offer.controller.ts's OFFER_CATEGORIES. Exported so
+// DuplicateDetectionService can recognize this specific value as
+// "unclassified" rather than a genuine signal — see its own comment.
+export const DEFAULT_CATEGORY = 'shopping';
 
 export interface CandidateResult {
   business: Business;

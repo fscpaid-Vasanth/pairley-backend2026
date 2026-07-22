@@ -209,6 +209,17 @@ model Business {
   // Advisory only; nothing reads this to gate behavior.
   suggested_merchant_type String?
 
+  // Module 11 Phase 2 — business-level duplicate suggestions. Recommendation
+  // only, exactly like the Offer-level fields: nothing here ever merges or
+  // consolidates businesses automatically. Actual consolidation is a
+  // Module 12 responsibility, once a merchant can verify ownership and
+  // claim which business record is the real one.
+  duplicate_of_business_id String?
+  duplicate_score            Float?
+  duplicate_reasons          String[]   @default([])
+  duplicate_of                Business?  @relation("BusinessDuplicates", fields: [duplicate_of_business_id], references: [id], onDelete: SetNull)
+  duplicates_of_this          Business[] @relation("BusinessDuplicates")
+
   // Module 2: Business Profile
   logo                 String?
   cover_image          String?
@@ -332,6 +343,10 @@ model Offer {
   // duplicate flag just clears rather than blocking or cascading the delete.
   duplicate_of_offer_id String?
   duplicate_score        Float?
+  // Human-readable, generated once at detection time and persisted (not
+  // recomputed on read) — an explainability snapshot of why this offer was
+  // flagged, even if the compared-against offer later changes.
+  duplicate_reasons      String[] @default([])
   duplicate_of           Offer?  @relation("OfferDuplicates", fields: [duplicate_of_offer_id], references: [id], onDelete: SetNull)
   duplicates_of_this     Offer[] @relation("OfferDuplicates")
 

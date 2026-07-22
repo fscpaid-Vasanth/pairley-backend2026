@@ -8,6 +8,7 @@ import { TextExtractionService } from './text-extraction.service';
 import { ConfidenceScoringService } from './confidence-scoring.service';
 import { CandidateOfferService } from './candidate-offer.service';
 import { NormalizationService } from './normalization.service';
+import { DuplicateDetectionService } from './duplicate-detection.service';
 import { FileValidationService } from './file-validation.service';
 import { FileImportError } from './file-import.errors';
 import { PdfTextService } from './pdf-text.service';
@@ -64,6 +65,7 @@ export class ImportOrchestrationService {
     private readonly confidenceScoringService: ConfidenceScoringService,
     private readonly candidateOfferService: CandidateOfferService,
     private readonly normalizationService: NormalizationService,
+    private readonly duplicateDetectionService: DuplicateDetectionService,
     private readonly fileValidationService: FileValidationService,
     private readonly storageService: StorageService,
     private readonly pdfTextService: PdfTextService,
@@ -106,6 +108,10 @@ export class ImportOrchestrationService {
         candidateOfferId = candidate.offer.id;
         candidateBusinessId = candidate.business.id;
         warnings = candidate.warnings;
+        await this.duplicateDetectionService.detectAndFlag(
+          candidate.offer,
+          candidate.business,
+        );
       }
 
       const done = await this.importJobRepo.updateJobStatus(
@@ -272,6 +278,10 @@ export class ImportOrchestrationService {
         candidateOfferId = candidate.offer.id;
         candidateBusinessId = candidate.business.id;
         warnings = candidate.warnings;
+        await this.duplicateDetectionService.detectAndFlag(
+          candidate.offer,
+          candidate.business,
+        );
       }
 
       await this.importJobRepo.updateJobStatus(jobId, ImportJobStatus.DONE, {
