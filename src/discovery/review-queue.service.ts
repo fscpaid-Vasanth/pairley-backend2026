@@ -3,8 +3,24 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Offer, OfferStatus, Prisma, Source } from '@prisma/client';
+import { Offer, OfferStatus, OfferType, Prisma, Source } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+
+// Module 11 Phase 4 — what an admin can atomically apply at approval time.
+// Every field is optional and independent: an omitted field means "keep
+// whatever extraction/normalization already set," exactly like every other
+// additive default in this module. enrichment_metadata itself is NEVER
+// touched by applying overrides — it stays a frozen record of what was
+// originally suggested, so comparing it against the live offer fields after
+// approval is itself the audit trail of what the admin accepted, edited, or
+// rejected.
+export interface CandidateOverrides {
+  category?: string;
+  offerType?: OfferType;
+  merchantType?: string;
+  tags?: string[];
+  keywords?: string[];
+}
 
 export type ReviewStatus =
   | 'REVIEW_REQUIRED'
@@ -183,16 +199,68 @@ export class ReviewQueueService {
       where: { offer_id: id },
       orderBy: { version_no: 'asc' },
     });
-    return { ...toCandidateSummary(offer), business: offer.business, history };
+    return {
+      ...toCandidateSummary(offer),
+      business: offer.business,
+      history,
+      // Module 11 Phase 4 — the AI Suggestions panel needs the full
+      // enrichment picture, not just the lean fields listCandidates
+      // returns for the paginated table. Deliberately kept off
+      // toCandidateSummary/listCandidates to avoid bloating every row of
+      // every page with a full explainability JSON blob most rows won't
+      // ever have their detail view opened for.
+      offer_type: offer.offer_type,
+      tags: offer.tags,
+      keywords: offer.keywords,
+      enrichment_status: offer.enrichment_status,
+      enrichment_confidence: offer.enrichment_confidence,
+      enrichment_metadata: offer.enrichment_metadata,
+    };
   }
 
-  async approve(id: string, adminId: string) {
-    return this.transition(
-      id,
-      adminId,
-      { status: OfferStatus.ACTIVE, review_required: false },
-      'REVIEW_APPROVED',
-    );
+  // Overrides are optional and applied atomically with the approval itself
+  // — no separate "save draft" round trip. This is the one transition that
+  // doesn't go through the shared transition() helper below: it needs to
+  // conditionally touch the Business row too (merchantType -> business_type)
+  // in the same transaction, which the other two transitions never do.
+  async approve(id: string, adminId: string, overrides?: CandidateOverrides) {
+    const offer = await this.findCandidateOrThrow(id);
+
+    return this.prisma.$transaction(async (tx) => {
+      const existingVersionCount = await tx.offerVersion.count({
+        where: { offer_id: id },
+      });
+      await tx.offerVersion.create({
+        data: {
+          offer_id: id,
+          version_no: existingVersionCount + 1,
+          snapshot: offer,
+          changed_by: adminId,
+          change_type: 'REVIEW_APPROVED',
+        },
+      });
+
+      const updatedOffer = await tx.offer.update({
+        where: { id },
+        data: {
+          status: OfferStatus.ACTIVE,
+          review_required: false,
+          ...(overrides?.category ? { category: overrides.category } : {}),
+          ...(overrides?.offerType ? { offer_type: overrides.offerType } : {}),
+          ...(overrides?.tags ? { tags: overrides.tags } : {}),
+          ...(overrides?.keywords ? { keywords: overrides.keywords } : {}),
+        },
+      });
+
+      if (overrides?.merchantType) {
+        await tx.business.update({
+          where: { id: offer.business_id },
+          data: { business_type: overrides.merchantType },
+        });
+      }
+
+      return updatedOffer;
+    });
   }
 
   async reject(id: string, adminId: string, reason?: string) {

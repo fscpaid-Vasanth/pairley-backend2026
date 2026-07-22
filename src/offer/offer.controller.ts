@@ -62,7 +62,9 @@ const MERCHANT_SETTABLE_STATUSES = ['ACTIVE', 'PAUSED', 'DRAFT'] as const;
 // The 12 category ids the frontend's src/data/categories.js actually
 // offers — validated against real production data during Module 4 STEP 1
 // (every in-use category matched exactly, no normalization needed).
-const OFFER_CATEGORIES = [
+// Exported so review-queue.controller.ts (Module 11 Phase 4) can validate
+// admin-supplied category overrides against the same real taxonomy.
+export const OFFER_CATEGORIES = [
   'shopping',
   'tours',
   'dining',

@@ -1,4 +1,4 @@
-import { OfferStatus, Source } from '@prisma/client';
+import { OfferStatus, OfferType, Source } from '@prisma/client';
 import { ReviewQueueService, deriveReviewStatus } from './review-queue.service';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -18,6 +18,7 @@ describe('ReviewQueueService', () => {
   let offerCount: jest.Mock;
   let offerFindUnique: jest.Mock;
   let offerUpdate: jest.Mock;
+  let businessUpdate: jest.Mock;
   let offerVersionCount: jest.Mock;
   let offerVersionCreate: jest.Mock;
   let prisma: {
@@ -27,6 +28,7 @@ describe('ReviewQueueService', () => {
       findUnique: jest.Mock;
       update: jest.Mock;
     };
+    business: { update: jest.Mock };
     offerVersion: { count: jest.Mock; create: jest.Mock; findMany: jest.Mock };
     $transaction: jest.Mock;
   };
@@ -50,6 +52,12 @@ describe('ReviewQueueService', () => {
     duplicate_of_offer_id: null,
     duplicate_score: null,
     duplicate_reasons: [],
+    offer_type: OfferType.STANDARD,
+    tags: [],
+    keywords: [],
+    enrichment_status: 'NOT_ENRICHED',
+    enrichment_confidence: null,
+    enrichment_metadata: null,
     business: {
       business_name: 'example.com (imported)',
       duplicate_of_business_id: null,
@@ -67,6 +75,7 @@ describe('ReviewQueueService', () => {
       .mockImplementation(({ data }) =>
         Promise.resolve({ ...candidateOffer, ...data }),
       );
+    businessUpdate = jest.fn().mockResolvedValue({});
     offerVersionCount = jest.fn().mockResolvedValue(1);
     offerVersionCreate = jest.fn().mockResolvedValue({ id: 'version-2' });
 
@@ -77,14 +86,23 @@ describe('ReviewQueueService', () => {
         findUnique: offerFindUnique,
         update: offerUpdate,
       },
+      business: { update: businessUpdate },
       offerVersion: {
         count: offerVersionCount,
         create: offerVersionCreate,
         findMany: jest.fn().mockResolvedValue([]),
       },
+      // approve() uses the callback form ($transaction(async tx => ...)),
+      // listCandidates uses the array form ($transaction([...])) — support
+      // both, handing the callback form the same mock object as `tx` since
+      // these tests don't need real transaction isolation.
       $transaction: jest
         .fn()
-        .mockImplementation((ops: Promise<unknown>[]) => Promise.all(ops)),
+        .mockImplementation((arg: unknown) =>
+          typeof arg === 'function'
+            ? (arg as (tx: unknown) => unknown)(prisma)
+            : Promise.all(arg as Promise<unknown>[]),
+        ),
     };
 
     service = new ReviewQueueService(prisma as unknown as PrismaService);
@@ -223,6 +241,27 @@ describe('ReviewQueueService', () => {
         'This offer was not AI-imported',
       );
     });
+
+    it('includes offer_type/tags/keywords/enrichment fields — needed by the AI Suggestions panel (Module 11 Phase 4)', async () => {
+      offerFindUnique.mockResolvedValue({
+        ...candidateOffer,
+        offer_type: OfferType.PERCENTAGE_DISCOUNT,
+        tags: ['diwali', 'sale'],
+        keywords: ['diwali', 'sale', 'dining'],
+        enrichment_status: 'ENRICHED',
+        enrichment_confidence: 0.75,
+        enrichment_metadata: { category: { suggested: 'dining' } },
+      });
+      const result = await service.getCandidate('offer-1');
+      expect(result).toMatchObject({
+        offer_type: OfferType.PERCENTAGE_DISCOUNT,
+        tags: ['diwali', 'sale'],
+        keywords: ['diwali', 'sale', 'dining'],
+        enrichment_status: 'ENRICHED',
+        enrichment_confidence: 0.75,
+        enrichment_metadata: { category: { suggested: 'dining' } },
+      });
+    });
   });
 
   describe('approve / reject / takedown', () => {
@@ -240,6 +279,63 @@ describe('ReviewQueueService', () => {
       };
       expect(offerVersionCreate).toHaveBeenCalledWith(versionData);
       expect(result.status).toBe(OfferStatus.ACTIVE);
+    });
+
+    describe('approve() with overrides (Module 11 Phase 4)', () => {
+      it('applies category/offerType/tags/keywords overrides atomically with the approval', async () => {
+        await service.approve('offer-1', 'admin-42', {
+          category: 'dining',
+          offerType: OfferType.PERCENTAGE_DISCOUNT,
+          tags: ['diwali', 'sale'],
+          keywords: ['diwali', 'sale', 'dining'],
+        });
+        expect(offerUpdate).toHaveBeenCalledWith({
+          where: { id: 'offer-1' },
+          data: {
+            status: OfferStatus.ACTIVE,
+            review_required: false,
+            category: 'dining',
+            offer_type: OfferType.PERCENTAGE_DISCOUNT,
+            tags: ['diwali', 'sale'],
+            keywords: ['diwali', 'sale', 'dining'],
+          },
+        });
+      });
+
+      it('atomically updates Business.business_type when a merchantType override is given', async () => {
+        await service.approve('offer-1', 'admin-42', {
+          merchantType: 'Restaurant / Food Service',
+        });
+        expect(businessUpdate).toHaveBeenCalledWith({
+          where: { id: 'business-1' },
+          data: { business_type: 'Restaurant / Food Service' },
+        });
+      });
+
+      it('does not touch Business at all when no merchantType override is given', async () => {
+        await service.approve('offer-1', 'admin-42', { category: 'dining' });
+        expect(businessUpdate).not.toHaveBeenCalled();
+      });
+
+      it('leaves every field unchanged when overrides is omitted entirely — unchanged Phase 1-3 behavior', async () => {
+        await service.approve('offer-1', 'admin-42');
+        expect(offerUpdate).toHaveBeenCalledWith({
+          where: { id: 'offer-1' },
+          data: { status: OfferStatus.ACTIVE, review_required: false },
+        });
+        expect(businessUpdate).not.toHaveBeenCalled();
+      });
+
+      it('snapshots the pre-approval offer state in the version history, not the post-override state', async () => {
+        await service.approve('offer-1', 'admin-42', { category: 'dining' });
+        expect(offerVersionCreate).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            snapshot: expect.objectContaining({
+              category: 'shopping',
+            }) as unknown,
+          }) as unknown,
+        });
+      });
     });
 
     it('reject() sets REJECTED and stores the reason in the version snapshot', async () => {

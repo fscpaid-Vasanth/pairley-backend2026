@@ -8,12 +8,23 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { IsArray, IsOptional, IsString, ArrayNotEmpty } from 'class-validator';
+import {
+  IsArray,
+  IsEnum,
+  IsIn,
+  IsOptional,
+  IsString,
+  ArrayNotEmpty,
+  ValidateNested,
+} from 'class-validator';
+import { Type } from 'class-transformer';
+import { OfferType } from '@prisma/client';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles, Role } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ReviewQueueService, ReviewStatus } from './review-queue.service';
+import { OFFER_CATEGORIES } from '../offer/offer.controller';
 
 const REVIEW_STATUSES: ReviewStatus[] = [
   'REVIEW_REQUIRED',
@@ -26,6 +37,43 @@ class RejectDto {
   @IsOptional()
   @IsString()
   reason?: string;
+}
+
+// Module 11 Phase 4 — what the admin decided in the AI Suggestions panel.
+// Every field independently optional: omitted = "keep the current value,"
+// exactly matching CandidateOverrides on the service side. category is
+// validated against the same real 12-item taxonomy offer creation uses;
+// offerType against the real Prisma enum — an admin-supplied override gets
+// exactly the same validation rigor as a merchant's own offer submission.
+class CandidateOverridesDto {
+  @IsOptional()
+  @IsIn(OFFER_CATEGORIES)
+  category?: string;
+
+  @IsOptional()
+  @IsEnum(OfferType)
+  offerType?: OfferType;
+
+  @IsOptional()
+  @IsString()
+  merchantType?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  tags?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  keywords?: string[];
+}
+
+class ApproveDto {
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CandidateOverridesDto)
+  overrides?: CandidateOverridesDto;
 }
 
 class BulkIdsDto {
@@ -76,8 +124,12 @@ export class ReviewQueueController {
   }
 
   @Put(':id/approve')
-  approve(@Param('id') id: string, @CurrentUser() admin: { sub: string }) {
-    return this.reviewQueueService.approve(id, admin.sub);
+  approve(
+    @Param('id') id: string,
+    @Body() body: ApproveDto,
+    @CurrentUser() admin: { sub: string },
+  ) {
+    return this.reviewQueueService.approve(id, admin.sub, body?.overrides);
   }
 
   @Put(':id/reject')
