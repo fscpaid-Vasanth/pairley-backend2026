@@ -19,6 +19,7 @@ import {
   SubscriptionStatus,
   VerificationStatus,
   LeadStatus,
+  BusinessStatus,
 } from '@prisma/client';
 
 // Legacy pair/group matching mechanics — kept working exactly as before.
@@ -478,10 +479,15 @@ export class OfferService {
       whereClause.end_date = { gte: new Date() };
     }
 
+    // Module 12 Phase 4 — defense in depth: a consolidated (REMOVED)
+    // business should never surface in public discovery. Reassignment
+    // during consolidation already moves every Offer off the removed
+    // business, so this should never actually filter anything out in
+    // practice — it's a safety net, not the primary mechanism.
+    whereClause.business = { business_status: { not: BusinessStatus.REMOVED } };
+
     if (filters.mall) {
-      whereClause.business = {
-        mall_name: filters.mall,
-      };
+      whereClause.business.mall_name = filters.mall;
     }
 
     if (filters.search) {
@@ -634,6 +640,13 @@ export class OfferService {
     const isAdmin = requestingRole === 'Admin';
 
     if (offer.status !== OfferStatus.ACTIVE && !isOwner && !isAdmin) {
+      throw new NotFoundException('Offer not found');
+    }
+    // Module 12 Phase 4 — same defense-in-depth as listOffers(): shouldn't
+    // be reachable in practice since consolidation reassigns every Offer
+    // off the REMOVED business, but a stale/direct link should still 404
+    // for non-admins rather than reveal a removed business's offer.
+    if (offer.business?.business_status === BusinessStatus.REMOVED && !isAdmin) {
       throw new NotFoundException('Offer not found');
     }
 

@@ -18,10 +18,12 @@ import { ImagePreprocessingService } from './image-preprocessing.service';
 import { ImportOrchestrationService } from './import-orchestration.service';
 import { ReviewQueueService } from './review-queue.service';
 import { ClaimRequestService } from './claim-request.service';
+import { BusinessConsolidationService } from './business-consolidation.service';
 import { DiscoveryController } from './discovery.controller';
 import { ReviewQueueController } from './review-queue.controller';
 import { ClaimController } from './claim.controller';
 import { ClaimAdminController } from './claim-admin.controller';
+import { BusinessDuplicatesController } from './business-duplicates.controller';
 
 // Module 9 — AI Offer Discovery (Group B). Phase 2 added the website-import
 // pipeline; Phase 3 added the review queue; Phase 4 adds the admin-assisted
@@ -48,6 +50,10 @@ import { ClaimAdminController } from './claim-admin.controller';
 // (reuses FileValidationService for the same magic-byte checks Module 10
 // established, and StorageService for upload) on top of its existing
 // Module 9 request -> admin review -> OTP -> transfer state machine.
+// Module 12 Phase 4 — BusinessConsolidationService is the first thing that
+// ever acts on DuplicateDetectionService's (Module 11 Phase 2) advisory
+// duplicate_of_business_id/score/reasons: admin-only, reassigns Offers and
+// soft-removes the losing business (never a hard delete).
 @Module({
   imports: [AuthModule],
   controllers: [
@@ -55,6 +61,7 @@ import { ClaimAdminController } from './claim-admin.controller';
     ReviewQueueController,
     ClaimController,
     ClaimAdminController,
+    BusinessDuplicatesController,
   ],
   providers: [
     ImportJobRepository,
@@ -77,6 +84,7 @@ import { ClaimAdminController } from './claim-admin.controller';
     ImportOrchestrationService,
     ReviewQueueService,
     ClaimRequestService,
+    BusinessConsolidationService,
   ],
   exports: [
     ImportJobRepository,
