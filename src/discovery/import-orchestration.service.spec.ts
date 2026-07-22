@@ -91,6 +91,7 @@ describe('ImportOrchestrationService', () => {
     );
     expect(candidateOfferService.createCandidate).toHaveBeenCalledWith({
       sourceUrl: 'http://example.com',
+      sourceType: 'WEBSITE',
       fields: { title: 'X', description: null, image: null, price: null },
       confidence: 0.4,
     });

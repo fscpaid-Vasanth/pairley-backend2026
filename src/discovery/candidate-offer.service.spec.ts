@@ -144,4 +144,91 @@ describe('CandidateOfferService', () => {
     };
     expect(businessCreate).toHaveBeenCalledWith(businessData);
   });
+
+  describe('sourceType parameterization (Module 10)', () => {
+    it('defaults to Source.WEBSITE when sourceType is omitted — exact Module 9 behavior', async () => {
+      await service.createCandidate({
+        sourceUrl: 'https://example.com/',
+        fields: { title: 'X', description: null, image: null, price: null },
+        confidence: 0.4,
+      });
+      expect(businessCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({ source: Source.WEBSITE }) as unknown,
+      });
+      expect(offerCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          source: Source.WEBSITE,
+          original_import_source: Source.WEBSITE,
+        }) as unknown,
+      });
+    });
+
+    it('uses a POSTER-labeled business name and sets source=POSTER when sourceType is POSTER', async () => {
+      await service.createCandidate({
+        sourceUrl:
+          'https://pairley-storage.s3.amazonaws.com/discovery/posters/abc.jpg',
+        sourceType: Source.POSTER,
+        fields: {
+          title: 'Diwali Sale',
+          description: null,
+          image: null,
+          price: 500,
+        },
+        confidence: 0.6,
+      });
+      expect(businessCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          business_name: 'Poster Import (imported)',
+          source: Source.POSTER,
+        }) as unknown,
+      });
+      expect(offerCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          source: Source.POSTER,
+          original_import_source: Source.POSTER,
+        }) as unknown,
+      });
+    });
+
+    it('uses a PDF-labeled business name and sets source=PDF when sourceType is PDF', async () => {
+      await service.createCandidate({
+        sourceUrl:
+          'https://pairley-storage.s3.amazonaws.com/discovery/pdfs/offer.pdf',
+        sourceType: Source.PDF,
+        fields: {
+          title: 'Menu Offer',
+          description: null,
+          image: null,
+          price: null,
+        },
+        confidence: 0.5,
+      });
+      expect(businessCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          business_name: 'PDF Import (imported)',
+          source: Source.PDF,
+        }) as unknown,
+      });
+    });
+
+    it('never derives a PDF/POSTER business name from the S3 hostname (unlike WEBSITE)', async () => {
+      await service.createCandidate({
+        sourceUrl:
+          'https://pairley-storage.s3.amazonaws.com/discovery/posters/abc.jpg',
+        sourceType: Source.POSTER,
+        fields: { title: 'X', description: null, image: null, price: null },
+        confidence: 0.4,
+      });
+      expect(businessCreate).not.toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          business_name: expect.stringContaining('s3.amazonaws.com') as unknown,
+        }) as unknown,
+      });
+      expect(businessCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          business_name: 'Poster Import (imported)',
+        }) as unknown,
+      });
+    });
+  });
 });

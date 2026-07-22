@@ -40,10 +40,18 @@ export class CandidateOfferService {
 
   async createCandidate(params: {
     sourceUrl: string;
+    sourceType?: Source;
     fields: ExtractedFields;
     confidence: number;
   }): Promise<CandidateResult> {
-    const { sourceUrl, fields, confidence } = params;
+    // Defaults to WEBSITE for backward compatibility with the Module 9
+    // call site — Module 10 (Phase 2 onward) passes PDF/POSTER explicitly.
+    const {
+      sourceUrl,
+      sourceType = Source.WEBSITE,
+      fields,
+      confidence,
+    } = params;
 
     const title = fields.title ?? 'Untitled Imported Offer';
     const description = fields.description ?? 'No description available.';
@@ -59,10 +67,7 @@ export class CandidateOfferService {
       'Category not detected — defaulted to "Shopping", please verify',
     );
 
-    const hostname = this.safeHostname(sourceUrl);
-    const businessName = hostname
-      ? `${hostname} (imported)`
-      : 'Imported Business (unknown source)';
+    const businessName = this.deriveBusinessName(sourceType, sourceUrl);
 
     const now = new Date();
     const endDate = new Date(
@@ -84,7 +89,7 @@ export class CandidateOfferService {
           pincode: '',
           verification_status: VerificationStatus.PENDING,
           business_status: BusinessStatus.UNCLAIMED,
-          source: Source.WEBSITE,
+          source: sourceType,
           created_by_ai: true,
         },
       });
@@ -102,12 +107,12 @@ export class CandidateOfferService {
           start_date: now,
           end_date: endDate,
           status: OfferStatus.DRAFT,
-          source: Source.WEBSITE,
+          source: sourceType,
           confidence_score: confidence,
           imported_at: now,
           review_required: true,
           original_import_url: sourceUrl,
-          original_import_source: 'WEBSITE',
+          original_import_source: sourceType,
           cover_image: fields.image,
         },
       });
@@ -129,6 +134,28 @@ export class CandidateOfferService {
       `Created review candidate: business=${business.id} offer=${offer.id} confidence=${confidence}`,
     );
     return { business, offer, warnings };
+  }
+
+  // WEBSITE candidates get a hostname-derived name ("example.com
+  // (imported)"). PDF/POSTER candidates have no meaningful hostname (their
+  // sourceUrl is the uploaded file's S3 location, not a merchant's own
+  // domain) — a generic source-type label is honest about what's actually
+  // known at this point, rather than surfacing an S3 bucket URL as if it
+  // were a business identity.
+  private deriveBusinessName(sourceType: Source, sourceUrl: string): string {
+    if (sourceType === Source.WEBSITE) {
+      const hostname = this.safeHostname(sourceUrl);
+      return hostname
+        ? `${hostname} (imported)`
+        : 'Imported Business (unknown source)';
+    }
+    const label =
+      sourceType === Source.PDF
+        ? 'PDF'
+        : sourceType === Source.POSTER
+          ? 'Poster'
+          : sourceType;
+    return `${label} Import (imported)`;
   }
 
   private safeHostname(url: string): string | null {

@@ -71,6 +71,7 @@ export class ImportOrchestrationService {
       if (fields.title) {
         const candidate = await this.candidateOfferService.createCandidate({
           sourceUrl: finalUrl,
+          sourceType: Source.WEBSITE,
           fields,
           confidence,
         });
