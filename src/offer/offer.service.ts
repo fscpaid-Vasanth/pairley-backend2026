@@ -607,6 +607,11 @@ export class OfferService {
             city: true,
             state: true,
             shop_photo: true,
+            // Module 12 Phase 2 — lets the customer-facing deal page decide
+            // whether to show the "Is this your business? Claim it." prompt
+            // (UNCLAIMED only). Additive — every existing consumer of this
+            // response already ignores fields it doesn't recognize.
+            business_status: true,
           },
         },
         interests: {
