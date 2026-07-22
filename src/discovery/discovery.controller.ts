@@ -73,8 +73,14 @@ export class DiscoveryController {
   }
 
   @Get('jobs')
-  listJobs(@Query('status') status?: ImportJobStatus) {
-    return this.importJobRepo.findJobs(status ? { status } : undefined);
+  listJobs(
+    @Query('status') status?: ImportJobStatus,
+    @Query('limit') limit?: string,
+  ) {
+    return this.importJobRepo.findJobs({
+      status,
+      limit: limit ? parseInt(limit, 10) : undefined,
+    });
   }
 
   @Get('jobs/:id')

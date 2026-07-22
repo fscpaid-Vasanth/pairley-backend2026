@@ -46,6 +46,7 @@ describe('ReviewQueueService', () => {
     category: 'shopping',
     description: 'No description available.',
     cover_image: null,
+    original_import_url: 'https://example.com/',
     business: { business_name: 'example.com (imported)' },
   };
 
@@ -89,6 +90,8 @@ describe('ReviewQueueService', () => {
         id: 'offer-1',
         business_name: 'example.com (imported)',
         review_status: 'REVIEW_REQUIRED',
+        description: 'No description available.',
+        source_file_url: 'https://example.com/',
       });
       expect(result.items[0].warnings).toEqual(
         expect.arrayContaining([

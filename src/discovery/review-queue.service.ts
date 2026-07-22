@@ -58,6 +58,7 @@ function toCandidateSummary(
   return {
     id: offer.id,
     title: offer.title,
+    description: offer.description,
     business_name: offer.business?.business_name ?? 'Unknown Business',
     source: offer.source,
     confidence_score: offer.confidence_score,
@@ -67,6 +68,12 @@ function toCandidateSummary(
     category: offer.category,
     review_status: deriveReviewStatus(offer),
     warnings: computeExtractionWarnings(offer),
+    // Module 10 Phase 3 — the original uploaded poster/PDF's storage
+    // location, so the admin review UI can render it alongside the
+    // extracted fields for comparison before approving. Meaningless for
+    // WEBSITE candidates (it's the source webpage, not an image/PDF) —
+    // the frontend only renders a preview when source is PDF/POSTER.
+    source_file_url: offer.original_import_url,
   };
 }
 

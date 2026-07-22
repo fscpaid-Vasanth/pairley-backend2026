@@ -36,10 +36,16 @@ export class ImportJobRepository {
     });
   }
 
-  findJobs(filters?: { status?: ImportJobStatus }) {
+  // Module 10 Phase 3 — the admin "Recent Imports" panel polls this
+  // repeatedly while a job is in flight; an unbounded result set would grow
+  // with total import volume forever, so a default/max limit keeps every
+  // poll cheap regardless of how many imports have ever been run.
+  findJobs(filters?: { status?: ImportJobStatus; limit?: number }) {
+    const limit = Math.min(100, Math.max(1, filters?.limit || 20));
     return this.prisma.importJob.findMany({
       where: filters?.status ? { status: filters.status } : undefined,
       orderBy: { created_at: 'desc' },
+      take: limit,
     });
   }
 
