@@ -10,6 +10,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ExtractedFields } from './content-extraction.service';
+import { NormalizedFields } from './normalization.service';
 
 const CANDIDATE_VALIDITY_DAYS = 30;
 // No category-classification logic exists yet (Module 9 v1, deterministic
@@ -43,6 +44,12 @@ export class CandidateOfferService {
     sourceType?: Source;
     fields: ExtractedFields;
     confidence: number;
+    // Module 11 Phase 1 — optional so every existing call site (and every
+    // existing test) keeps working unchanged. When present, its fields
+    // take priority over the plain-extraction defaults below; when absent
+    // or when a given sub-field wasn't confidently derived, behavior is
+    // byte-for-byte identical to pre-Module-11.
+    normalized?: NormalizedFields;
   }): Promise<CandidateResult> {
     // Defaults to WEBSITE for backward compatibility with the Module 9
     // call site — Module 10 (Phase 2 onward) passes PDF/POSTER explicitly.
@@ -51,11 +58,14 @@ export class CandidateOfferService {
       sourceType = Source.WEBSITE,
       fields,
       confidence,
+      normalized,
     } = params;
 
     const title = fields.title ?? 'Untitled Imported Offer';
     const description = fields.description ?? 'No description available.';
-    const price = fields.price ?? 0;
+    const originalPrice = normalized?.original_price ?? fields.price ?? 0;
+    const offerPrice = normalized?.offer_price ?? fields.price ?? 0;
+    const offerType = normalized?.offer_type ?? OfferType.STANDARD;
 
     const warnings: string[] = [];
     if (!fields.title) warnings.push('No title detected — using a placeholder');
@@ -70,9 +80,10 @@ export class CandidateOfferService {
     const businessName = this.deriveBusinessName(sourceType, sourceUrl);
 
     const now = new Date();
-    const endDate = new Date(
+    const defaultEndDate = new Date(
       now.getTime() + CANDIDATE_VALIDITY_DAYS * 24 * 60 * 60 * 1000,
     );
+    const endDate = normalized?.validity_end ?? defaultEndDate;
 
     const { business, offer } = await this.prisma.$transaction(async (tx) => {
       const business = await tx.business.create({
@@ -99,10 +110,10 @@ export class CandidateOfferService {
           business_id: business.id,
           title,
           description,
-          offer_type: OfferType.STANDARD,
+          offer_type: offerType,
           category: DEFAULT_CATEGORY,
-          original_price: price,
-          offer_price: price,
+          original_price: originalPrice,
+          offer_price: offerPrice,
           required_people: 1,
           start_date: now,
           end_date: endDate,

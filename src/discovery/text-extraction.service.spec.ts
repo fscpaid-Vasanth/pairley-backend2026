@@ -47,6 +47,7 @@ describe('TextExtractionService', () => {
       description: null,
       image: null,
       price: null,
+      rawText: '   \n\n  ',
     });
   });
 

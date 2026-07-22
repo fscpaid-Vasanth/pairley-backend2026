@@ -5,6 +5,13 @@ export interface ExtractedFields {
   description: string | null;
   image: string | null;
   price: number | null;
+  // Module 11 — the underlying text extraction ran against (visible HTML
+  // text, or raw OCR/PDF text), preserved so NormalizationService can do
+  // pattern-matching (discount phrasing, offer-type keywords, validity
+  // dates) that the original title/description/price extraction didn't
+  // attempt. Optional so any existing object literal built without it
+  // (tests, older call sites) still satisfies this interface unchanged.
+  rawText?: string;
 }
 
 // Deterministic, rule-based extraction only — no LLM/AI inference in Module
@@ -25,7 +32,17 @@ export class ContentExtractionService {
         this.decodeEntities(this.metaContent(html, 'og:description')),
       image: this.metaContent(html, 'og:image'),
       price: this.extractPrice(html),
+      rawText: this.visibleText(html),
     };
+  }
+
+  private visibleText(html: string): string {
+    return html
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
   private firstMatch(html: string, pattern: RegExp): string | null {
@@ -55,12 +72,7 @@ export class ContentExtractionService {
   }
 
   private extractPrice(html: string): number | null {
-    const visibleText = html
-      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-      .replace(/<[^>]+>/g, ' ');
-
-    const match = visibleText.match(
+    const match = this.visibleText(html).match(
       /(?:₹|Rs\.?|INR)\s?([\d,]+(?:\.\d{1,2})?)/i,
     );
     if (!match) return null;

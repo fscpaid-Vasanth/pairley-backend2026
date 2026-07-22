@@ -7,6 +7,7 @@ import { ContentExtractionService } from './content-extraction.service';
 import { TextExtractionService } from './text-extraction.service';
 import { ConfidenceScoringService } from './confidence-scoring.service';
 import { CandidateOfferService } from './candidate-offer.service';
+import { NormalizationService } from './normalization.service';
 import { FileValidationService } from './file-validation.service';
 import { FileImportError } from './file-import.errors';
 import { PdfTextService } from './pdf-text.service';
@@ -62,6 +63,7 @@ export class ImportOrchestrationService {
     private readonly textExtractionService: TextExtractionService,
     private readonly confidenceScoringService: ConfidenceScoringService,
     private readonly candidateOfferService: CandidateOfferService,
+    private readonly normalizationService: NormalizationService,
     private readonly fileValidationService: FileValidationService,
     private readonly storageService: StorageService,
     private readonly pdfTextService: PdfTextService,
@@ -99,6 +101,7 @@ export class ImportOrchestrationService {
           sourceType: Source.WEBSITE,
           fields,
           confidence,
+          normalized: this.normalizationService.normalize(fields),
         });
         candidateOfferId = candidate.offer.id;
         candidateBusinessId = candidate.business.id;
@@ -264,6 +267,7 @@ export class ImportOrchestrationService {
           sourceType,
           fields,
           confidence,
+          normalized: this.normalizationService.normalize(fields),
         });
         candidateOfferId = candidate.offer.id;
         candidateBusinessId = candidate.business.id;

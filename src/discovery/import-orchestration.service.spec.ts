@@ -6,6 +6,7 @@ import { ImportJobRepository } from './import-job.repository';
 import { ContentExtractionService } from './content-extraction.service';
 import { TextExtractionService } from './text-extraction.service';
 import { CandidateOfferService } from './candidate-offer.service';
+import { NormalizationService } from './normalization.service';
 import { FileImportError } from './file-import.errors';
 import { ImagePreprocessingService } from './image-preprocessing.service';
 import { OcrService } from './ocr.service';
@@ -31,6 +32,7 @@ describe('ImportOrchestrationService', () => {
   let textExtractionService: { extract: jest.Mock };
   let confidenceScoringService: { score: jest.Mock };
   let candidateOfferService: { createCandidate: jest.Mock };
+  let normalizationService: NormalizationService;
   let fileValidationService: {
     validate: jest.Mock;
     sanitizeFilename: jest.Mock;
@@ -72,6 +74,11 @@ describe('ImportOrchestrationService', () => {
         warnings: ['No price detected'],
       }),
     };
+    // Real instance, not a mock — NormalizationService is a small, pure,
+    // deterministically-tested-on-its-own service; using the real thing
+    // here keeps these orchestration tests focused on wiring/sequencing
+    // while still exercising real normalize() output.
+    normalizationService = new NormalizationService();
     fileValidationService = {
       validate: jest.fn(),
       sanitizeFilename: jest.fn().mockImplementation((name: string) => name),
@@ -96,6 +103,7 @@ describe('ImportOrchestrationService', () => {
       textExtractionService as unknown as TextExtractionService,
       confidenceScoringService,
       candidateOfferService as unknown as CandidateOfferService,
+      normalizationService,
       fileValidationService,
       storageService as unknown as StorageService,
       pdfTextService,
@@ -134,6 +142,12 @@ describe('ImportOrchestrationService', () => {
         sourceType: 'WEBSITE',
         fields: { title: 'X', description: null, image: null, price: null },
         confidence: 0.4,
+        normalized: {
+          original_price: null,
+          offer_price: null,
+          offer_type: 'STANDARD',
+          validity_end: null,
+        },
       });
 
       const donePatch = {
@@ -314,6 +328,12 @@ describe('ImportOrchestrationService', () => {
           price: 499,
         },
         confidence: 0.7,
+        normalized: {
+          original_price: 499,
+          offer_price: 499,
+          offer_type: 'STANDARD',
+          validity_end: null,
+        },
       });
       expect(importJobRepo.updateJobStatus).toHaveBeenCalledWith(
         job.id,
@@ -323,11 +343,21 @@ describe('ImportOrchestrationService', () => {
     });
 
     it('corrects the job source_type from its POSTER placeholder to PDF once the mimetype is known', async () => {
-      pdfTextService.extractText.mockResolvedValue('Menu Special — Combo for ₹299');
-      textExtractionService.extract.mockReturnValue({ title: 'Menu Special', description: null, image: null, price: 299 });
+      pdfTextService.extractText.mockResolvedValue(
+        'Menu Special — Combo for ₹299',
+      );
+      textExtractionService.extract.mockReturnValue({
+        title: 'Menu Special',
+        description: null,
+        image: null,
+        price: 299,
+      });
       confidenceScoringService.score.mockReturnValue(0.5);
 
-      await service.importFromFile({ ...fileParams, mimetype: 'application/pdf' });
+      await service.importFromFile({
+        ...fileParams,
+        mimetype: 'application/pdf',
+      });
 
       expect(importJobRepo.updateJobStatus).toHaveBeenCalledWith(
         job.id,

@@ -128,6 +128,19 @@ enum ImportJobStatus {
   FAILED
 }
 
+// Module 11 — AI Offer Standardization & Enrichment. Tracks an Offer's
+// enrichment lifecycle, separate from ImportJobStatus (which tracks the
+// import/extraction job itself, not what happens to the resulting offer
+// afterward). NOT_ENRICHED is the default for every offer today, including
+// all pre-Module-11 rows and every MANUAL (merchant self-service) offer,
+// which is never a candidate for enrichment.
+enum EnrichmentStatus {
+  NOT_ENRICHED
+  PENDING
+  ENRICHED
+  ENRICHMENT_FAILED
+}
+
 model Customer {
   id                  String             @id @default(uuid())
   name                String
@@ -190,6 +203,11 @@ model Business {
   claimed_by           String?
   subscription_id      String?
   notification_mobiles String?
+
+  // Module 11 — AI-suggested merchant type, distinct from the existing
+  // free-text business_type an admin/merchant can already set directly.
+  // Advisory only; nothing reads this to gate behavior.
+  suggested_merchant_type String?
 
   // Module 2: Business Profile
   logo                 String?
@@ -287,6 +305,35 @@ model Offer {
   original_import_source String?
   merchant_verified      Boolean   @default(false)
   is_pairley_exclusive   Boolean   @default(false) // admin-only badge flag
+
+  // Module 11 — canonical offer schema. subtitle/tags/keywords are additive
+  // and empty/null until enrichment (Phase 3) populates them; the
+  // normalization pipeline (Phase 1) does not touch these three.
+  subtitle String? // short merchant-friendly tagline, distinct from title
+  tags     String[] @default([]) // human-facing chips — admin-editable
+  keywords String[] @default([]) // search-index terms, separate from tags
+                                  // so search/ranking can evolve independently
+                                  // of what's shown as chips in the UI
+
+  // Enrichment audit trail. enrichment_confidence is a SEPARATE axis from
+  // confidence_score above — confidence_score measures extraction
+  // completeness (Module 9/10), enrichment_confidence measures how sure the
+  // enrichment step is about its category/tag/type suggestions (Module 11).
+  // enrichment_metadata carries, per suggested field: {suggested, accepted,
+  // confidence, rationale} — the explainability trail Decision 6 requires.
+  enrichment_status     EnrichmentStatus @default(NOT_ENRICHED)
+  enrichment_confidence Float?
+  enrichment_metadata   Json?
+
+  // Duplicate detection (Module 11 Phase 2) — recommendation only, never
+  // auto-merged (Decision 4). Always points at the earliest surviving
+  // offer in a duplicate group, never at an intermediate one, so chains
+  // stay flat. onDelete: SetNull — if the original is later removed, the
+  // duplicate flag just clears rather than blocking or cascading the delete.
+  duplicate_of_offer_id String?
+  duplicate_score        Float?
+  duplicate_of           Offer?  @relation("OfferDuplicates", fields: [duplicate_of_offer_id], references: [id], onDelete: SetNull)
+  duplicates_of_this     Offer[] @relation("OfferDuplicates")
 
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt

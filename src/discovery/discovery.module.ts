@@ -7,6 +7,7 @@ import { TextExtractionService } from './text-extraction.service';
 import { OcrService } from './ocr.service';
 import { ConfidenceScoringService } from './confidence-scoring.service';
 import { CandidateOfferService } from './candidate-offer.service';
+import { NormalizationService } from './normalization.service';
 import { FileValidationService } from './file-validation.service';
 import { PdfTextService } from './pdf-text.service';
 import { ImagePreprocessingService } from './image-preprocessing.service';
@@ -28,6 +29,10 @@ import { ClaimAdminController } from './claim-admin.controller';
 // ImagePreprocessingService, and ImportOrchestrationService.importFromFile).
 // StorageService (S3 upload) is injected from the @Global() CommonModule,
 // not imported here explicitly.
+// Module 11 Phase 1 — NormalizationService sits between extraction and
+// CandidateOfferService.createCandidate(), deterministically deriving a
+// discount split / offer_type / validity end date that plain extraction
+// doesn't attempt. No AI/LLM here — that's Phase 3.
 @Module({
   imports: [AuthModule],
   controllers: [
@@ -44,6 +49,7 @@ import { ClaimAdminController } from './claim-admin.controller';
     OcrService,
     ConfidenceScoringService,
     CandidateOfferService,
+    NormalizationService,
     FileValidationService,
     PdfTextService,
     ImagePreprocessingService,

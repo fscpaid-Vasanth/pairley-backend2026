@@ -19,6 +19,8 @@ describe('ContentExtractionService', () => {
       description: 'Flat 20% off storewide',
       image: 'https://example.com/banner.jpg',
       price: 1500,
+      rawText:
+        'Diwali Sale &amp; Offers Original price: ₹1,500 only this week!',
     });
   });
 
@@ -45,6 +47,7 @@ describe('ContentExtractionService', () => {
       description: null,
       image: null,
       price: null,
+      rawText: 'No structured data here',
     });
   });
 

@@ -26,7 +26,7 @@ export class TextExtractionService {
     const description = this.extractDescription(lines, title);
     const price = this.extractPrice(rawText);
 
-    return { title, description, image: null, price };
+    return { title, description, image: null, price, rawText };
   }
 
   private extractTitle(lines: string[]): string | null {

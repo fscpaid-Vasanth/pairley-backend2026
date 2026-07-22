@@ -231,4 +231,71 @@ describe('CandidateOfferService', () => {
       });
     });
   });
+
+  describe('normalized fields (Module 11 Phase 1)', () => {
+    it('uses normalized original/offer price and offer_type when supplied, instead of the plain extracted price', async () => {
+      await service.createCandidate({
+        sourceUrl: 'https://example.com/',
+        fields: { title: 'X', description: null, image: null, price: 599 },
+        confidence: 0.6,
+        normalized: {
+          original_price: 999,
+          offer_price: 599,
+          offer_type: OfferType.PERCENTAGE_DISCOUNT,
+          validity_end: null,
+        },
+      });
+
+      expect(offerCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          original_price: 999,
+          offer_price: 599,
+          offer_type: OfferType.PERCENTAGE_DISCOUNT,
+        }) as unknown,
+      });
+    });
+
+    it('uses the normalized validity_end date when supplied, instead of the default 30-day window', async () => {
+      const validityEnd = new Date('2026-12-25T23:59:59.000Z');
+      await service.createCandidate({
+        sourceUrl: 'https://example.com/',
+        fields: { title: 'X', description: null, image: null, price: null },
+        confidence: 0.4,
+        normalized: {
+          original_price: null,
+          offer_price: null,
+          offer_type: OfferType.STANDARD,
+          validity_end: validityEnd,
+        },
+      });
+
+      expect(offerCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({ end_date: validityEnd }) as unknown,
+      });
+    });
+
+    it('falls back to plain-extraction behavior for any normalized sub-field left null', async () => {
+      await service.createCandidate({
+        sourceUrl: 'https://example.com/',
+        fields: { title: 'X', description: null, image: null, price: 250 },
+        confidence: 0.5,
+        normalized: {
+          original_price: null,
+          offer_price: null,
+          offer_type: OfferType.STANDARD,
+          validity_end: null,
+        },
+      });
+
+      // normalized.original_price/offer_price are null (nothing confidently
+      // derived) — falls back to fields.price, exactly like no `normalized`
+      // being passed at all.
+      expect(offerCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          original_price: 250,
+          offer_price: 250,
+        }) as unknown,
+      });
+    });
+  });
 });
