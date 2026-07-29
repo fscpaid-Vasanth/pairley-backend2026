@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -14,12 +15,42 @@ import { PrismaService } from '../prisma/prisma.service';
 // originally suggested, so comparing it against the live offer fields after
 // approval is itself the audit trail of what the admin accepted, edited, or
 // rejected.
+//
+// Module 14 Phase 1 widened this from the original five AI-suggestion
+// fields to the full editable candidate, because the admin now reviews an
+// extracted offer end to end rather than only accepting/rejecting
+// suggestions. Same contract throughout: every field optional, omitted
+// means unchanged. Deliberately no new columns — every field here maps to
+// one that already exists on Offer or Business.
 export interface CandidateOverrides {
+  // Offer — AI suggestion fields (Module 11)
   category?: string;
   offerType?: OfferType;
-  merchantType?: string;
   tags?: string[];
   keywords?: string[];
+  // Offer — core content
+  title?: string;
+  description?: string;
+  subtitle?: string;
+  originalPrice?: number;
+  offerPrice?: number;
+  requiredPeople?: number;
+  startDate?: Date;
+  endDate?: Date;
+  coverImage?: string;
+  // Business — identity and contact. merchantType predates this and maps to
+  // Business.business_type; the rest are new in Module 14 Phase 1.
+  merchantType?: string;
+  businessName?: string;
+  businessCategory?: string;
+  businessMobile?: string;
+  businessEmail?: string;
+  businessAddress?: string;
+  businessCity?: string;
+  businessState?: string;
+  businessPincode?: string;
+  businessWebsite?: string;
+  businessGstNumber?: string;
 }
 
 export type ReviewStatus =
@@ -199,10 +230,39 @@ export class ReviewQueueService {
       where: { offer_id: id },
       orderBy: { version_no: 'asc' },
     });
+    // Module 14 Phase 1 — the originating import job carries what the
+    // pipeline actually read off the source (raw extracted fields, per-run
+    // warnings, OCR confidence). Surfacing it lets the review screen put
+    // "what we found" next to "what Pairley will publish", which is the
+    // comparison an admin needs to judge an extraction rather than just
+    // read it. There's no FK in either direction — ImportJob points at the
+    // offer it created — so this is a lookup, not an include.
+    const importJob = await this.prisma.importJob.findFirst({
+      where: { created_offer_id: id },
+      orderBy: { created_at: 'desc' },
+      select: {
+        id: true,
+        source_type: true,
+        source_url: true,
+        status: true,
+        extracted_fields: true,
+        created_at: true,
+      },
+    });
+
     return {
       ...toCandidateSummary(offer),
       business: offer.business,
       history,
+      import_job: importJob,
+      // The remaining editable offer fields. toCandidateSummary stays lean
+      // for the paginated table; the detail view is where the full record
+      // is worth sending.
+      subtitle: offer.subtitle,
+      required_people: offer.required_people,
+      start_date: offer.start_date,
+      end_date: offer.end_date,
+      cover_image: offer.cover_image,
       // Module 11 Phase 4 — the AI Suggestions panel needs the full
       // enrichment picture, not just the lean fields listCandidates
       // returns for the paginated table. Deliberately kept off
@@ -219,48 +279,199 @@ export class ReviewQueueService {
   }
 
   // Overrides are optional and applied atomically with the approval itself
-  // — no separate "save draft" round trip. This is the one transition that
-  // doesn't go through the shared transition() helper below: it needs to
-  // conditionally touch the Business row too (merchantType -> business_type)
-  // in the same transaction, which the other two transitions never do.
+  // — no separate "save draft" round trip is required, though saveDraft()
+  // below exists for the admin who wants to stop partway. This is the one
+  // transition that doesn't go through the shared transition() helper: it
+  // needs to conditionally touch the Business row too in the same
+  // transaction, which reject/takedown never do.
   async approve(id: string, adminId: string, overrides?: CandidateOverrides) {
-    const offer = await this.findCandidateOrThrow(id);
-
-    return this.prisma.$transaction(async (tx) => {
-      const existingVersionCount = await tx.offerVersion.count({
-        where: { offer_id: id },
-      });
-      await tx.offerVersion.create({
-        data: {
-          offer_id: id,
-          version_no: existingVersionCount + 1,
-          snapshot: offer,
-          changed_by: adminId,
-          change_type: 'REVIEW_APPROVED',
-        },
-      });
-
-      const updatedOffer = await tx.offer.update({
-        where: { id },
-        data: {
-          status: OfferStatus.ACTIVE,
-          review_required: false,
-          ...(overrides?.category ? { category: overrides.category } : {}),
-          ...(overrides?.offerType ? { offer_type: overrides.offerType } : {}),
-          ...(overrides?.tags ? { tags: overrides.tags } : {}),
-          ...(overrides?.keywords ? { keywords: overrides.keywords } : {}),
-        },
-      });
-
-      if (overrides?.merchantType) {
-        await tx.business.update({
-          where: { id: offer.business_id },
-          data: { business_type: overrides.merchantType },
-        });
-      }
-
-      return updatedOffer;
+    return this.applyOverrides(id, adminId, overrides, {
+      changeType: 'REVIEW_APPROVED',
+      statusChange: { status: OfferStatus.ACTIVE, review_required: false },
     });
+  }
+
+  // Module 14 Phase 1 — persist an admin's in-progress edits without
+  // publishing. Deliberately shares approve()'s exact override-application
+  // path so a saved draft and a direct approval can never diverge in how
+  // they interpret the same payload; the only difference is that no status
+  // transition is applied, so the candidate stays in the review queue.
+  async saveDraft(id: string, adminId: string, overrides?: CandidateOverrides) {
+    return this.applyOverrides(id, adminId, overrides, {
+      changeType: 'REVIEW_DRAFT_SAVED',
+    });
+  }
+
+  private async applyOverrides(
+    id: string,
+    adminId: string,
+    overrides: CandidateOverrides | undefined,
+    options: {
+      changeType: string;
+      statusChange?: Prisma.OfferUpdateInput;
+    },
+  ) {
+    const offer = await this.findCandidateOrThrow(id);
+    this.assertCoherent(offer, overrides);
+
+    const offerData = this.buildOfferUpdate(overrides);
+    const businessData = this.buildBusinessUpdate(overrides);
+
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const existingVersionCount = await tx.offerVersion.count({
+          where: { offer_id: id },
+        });
+        await tx.offerVersion.create({
+          data: {
+            offer_id: id,
+            version_no: existingVersionCount + 1,
+            snapshot: offer,
+            changed_by: adminId,
+            change_type: options.changeType,
+          },
+        });
+
+        const updatedOffer = await tx.offer.update({
+          where: { id },
+          data: { ...offerData, ...(options.statusChange ?? {}) },
+        });
+
+        if (Object.keys(businessData).length > 0) {
+          await tx.business.update({
+            where: { id: offer.business_id },
+            data: businessData,
+          });
+        }
+
+        return updatedOffer;
+      });
+    } catch (err) {
+      // Business.mobile and Business.email are both @unique. An admin
+      // correcting an extracted phone number can legitimately collide with
+      // a business already on Pairley — that's a duplicate to resolve via
+      // consolidation, not a server error, so it gets a message saying so.
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
+        const fields = (err.meta?.target as string[] | undefined) ?? [];
+        const label = fields.includes('email')
+          ? 'email address'
+          : fields.includes('mobile')
+            ? 'mobile number'
+            : 'value';
+        throw new BadRequestException(
+          `Another business already uses this ${label}. It may be a duplicate — check Business Duplicates before continuing.`,
+        );
+      }
+      throw err;
+    }
+  }
+
+  // Validates the *effective* result (stored value where the admin didn't
+  // override it), not just the submitted payload — editing only one side of
+  // a pair is the common case and it still has to end up coherent.
+  private assertCoherent(offer: Offer, overrides?: CandidateOverrides) {
+    if (!overrides) return;
+
+    const originalPrice = overrides.originalPrice ?? offer.original_price;
+    const offerPrice = overrides.offerPrice ?? offer.offer_price;
+    if (offerPrice > originalPrice) {
+      throw new BadRequestException(
+        'Offer price cannot be higher than the original price.',
+      );
+    }
+
+    const startDate = overrides.startDate ?? offer.start_date;
+    const endDate = overrides.endDate ?? offer.end_date;
+    if (endDate <= startDate) {
+      throw new BadRequestException('End date must be after the start date.');
+    }
+  }
+
+  private buildOfferUpdate(
+    overrides?: CandidateOverrides,
+  ): Prisma.OfferUpdateInput {
+    if (!overrides) return {};
+    return {
+      ...(overrides.category !== undefined
+        ? { category: overrides.category }
+        : {}),
+      ...(overrides.offerType !== undefined
+        ? { offer_type: overrides.offerType }
+        : {}),
+      ...(overrides.tags !== undefined ? { tags: overrides.tags } : {}),
+      ...(overrides.keywords !== undefined
+        ? { keywords: overrides.keywords }
+        : {}),
+      ...(overrides.title !== undefined ? { title: overrides.title } : {}),
+      ...(overrides.description !== undefined
+        ? { description: overrides.description }
+        : {}),
+      ...(overrides.subtitle !== undefined
+        ? { subtitle: overrides.subtitle }
+        : {}),
+      ...(overrides.originalPrice !== undefined
+        ? { original_price: overrides.originalPrice }
+        : {}),
+      ...(overrides.offerPrice !== undefined
+        ? { offer_price: overrides.offerPrice }
+        : {}),
+      ...(overrides.requiredPeople !== undefined
+        ? { required_people: overrides.requiredPeople }
+        : {}),
+      ...(overrides.startDate !== undefined
+        ? { start_date: overrides.startDate }
+        : {}),
+      ...(overrides.endDate !== undefined
+        ? { end_date: overrides.endDate }
+        : {}),
+      ...(overrides.coverImage !== undefined
+        ? { cover_image: overrides.coverImage }
+        : {}),
+    };
+  }
+
+  private buildBusinessUpdate(
+    overrides?: CandidateOverrides,
+  ): Prisma.BusinessUpdateInput {
+    if (!overrides) return {};
+    return {
+      ...(overrides.merchantType !== undefined
+        ? { business_type: overrides.merchantType }
+        : {}),
+      ...(overrides.businessName !== undefined
+        ? { business_name: overrides.businessName }
+        : {}),
+      ...(overrides.businessCategory !== undefined
+        ? { category: overrides.businessCategory }
+        : {}),
+      ...(overrides.businessMobile !== undefined
+        ? { mobile: overrides.businessMobile }
+        : {}),
+      ...(overrides.businessEmail !== undefined
+        ? { email: overrides.businessEmail }
+        : {}),
+      ...(overrides.businessAddress !== undefined
+        ? { address: overrides.businessAddress }
+        : {}),
+      ...(overrides.businessCity !== undefined
+        ? { city: overrides.businessCity }
+        : {}),
+      ...(overrides.businessState !== undefined
+        ? { state: overrides.businessState }
+        : {}),
+      ...(overrides.businessPincode !== undefined
+        ? { pincode: overrides.businessPincode }
+        : {}),
+      ...(overrides.businessWebsite !== undefined
+        ? { website: overrides.businessWebsite }
+        : {}),
+      ...(overrides.businessGstNumber !== undefined
+        ? { gst_number: overrides.businessGstNumber }
+        : {}),
+    };
   }
 
   async reject(id: string, adminId: string, reason?: string) {

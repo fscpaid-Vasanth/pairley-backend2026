@@ -30,6 +30,7 @@ describe('ReviewQueueService', () => {
     };
     business: { update: jest.Mock };
     offerVersion: { count: jest.Mock; create: jest.Mock; findMany: jest.Mock };
+    importJob: { findFirst: jest.Mock };
     $transaction: jest.Mock;
   };
   let service: ReviewQueueService;
@@ -48,6 +49,12 @@ describe('ReviewQueueService', () => {
     category: 'shopping',
     description: 'No description available.',
     cover_image: null,
+    // Module 14 Phase 1 — the coherence checks on saveDraft/approve compare
+    // a submitted value against the stored one, so these have to be real.
+    subtitle: null,
+    required_people: 1,
+    start_date: new Date('2026-01-01'),
+    end_date: new Date('2026-01-31'),
     original_import_url: 'https://example.com/',
     duplicate_of_offer_id: null,
     duplicate_score: null,
@@ -87,6 +94,11 @@ describe('ReviewQueueService', () => {
         update: offerUpdate,
       },
       business: { update: businessUpdate },
+      // Module 14 Phase 1 — getCandidate looks up the originating import
+      // job so the review screen can show the raw extraction next to the
+      // Pairley-formatted result. Null is the realistic default: a
+      // candidate whose job row has been pruned still has to render.
+      importJob: { findFirst: jest.fn().mockResolvedValue(null) },
       offerVersion: {
         count: offerVersionCount,
         create: offerVersionCreate,
@@ -335,6 +347,175 @@ describe('ReviewQueueService', () => {
             }) as unknown,
           }) as unknown,
         });
+      });
+    });
+
+    describe('full-field editing (Module 14 Phase 1)', () => {
+      it('applies core offer content overrides alongside the approval', async () => {
+        await service.approve('offer-1', 'admin-42', {
+          title: 'Spec Gym — 6 Months Monsoon Offer',
+          description: 'Six months of full gym access.',
+          subtitle: 'Monsoon special',
+          originalPrice: 30000,
+          offerPrice: 6000,
+          requiredPeople: 5,
+          coverImage: 'https://cdn.example.com/gym.jpg',
+        });
+        expect(offerUpdate).toHaveBeenCalledWith({
+          where: { id: 'offer-1' },
+          data: expect.objectContaining({
+            title: 'Spec Gym — 6 Months Monsoon Offer',
+            description: 'Six months of full gym access.',
+            subtitle: 'Monsoon special',
+            original_price: 30000,
+            offer_price: 6000,
+            required_people: 5,
+            cover_image: 'https://cdn.example.com/gym.jpg',
+            status: OfferStatus.ACTIVE,
+          }) as unknown,
+        });
+      });
+
+      it('applies business identity and contact overrides in the same transaction', async () => {
+        await service.approve('offer-1', 'admin-42', {
+          businessName: 'Spec Gym',
+          businessCategory: 'Gym',
+          businessMobile: '9876543210',
+          businessAddress: '12 Anna Nagar',
+          businessCity: 'Chennai',
+          businessState: 'Tamil Nadu',
+          businessPincode: '600040',
+          businessWebsite: 'https://specgym.in',
+          businessGstNumber: '33AAAAA0000A1Z5',
+        });
+        expect(businessUpdate).toHaveBeenCalledWith({
+          where: { id: 'business-1' },
+          data: {
+            business_name: 'Spec Gym',
+            category: 'Gym',
+            mobile: '9876543210',
+            address: '12 Anna Nagar',
+            city: 'Chennai',
+            state: 'Tamil Nadu',
+            pincode: '600040',
+            website: 'https://specgym.in',
+            gst_number: '33AAAAA0000A1Z5',
+          },
+        });
+      });
+
+      // An extraction that produced junk tags should be clearable. Treating
+      // [] as "no override" would make an admin unable to empty a field.
+      it('treats an explicitly empty array as a real edit, not as "unchanged"', async () => {
+        await service.approve('offer-1', 'admin-42', { tags: [] });
+        expect(offerUpdate).toHaveBeenCalledWith({
+          where: { id: 'offer-1' },
+          data: expect.objectContaining({ tags: [] }) as unknown,
+        });
+      });
+
+      describe('coherence checks', () => {
+        it('rejects an offer price above the original price', async () => {
+          await expect(
+            service.approve('offer-1', 'admin-42', {
+              originalPrice: 1000,
+              offerPrice: 2000,
+            }),
+          ).rejects.toThrow('cannot be higher than the original price');
+          expect(offerUpdate).not.toHaveBeenCalled();
+        });
+
+        // Only one side of the pair is submitted — the check has to compare
+        // against what's stored, or half an edit slips through.
+        it('compares a submitted price against the stored one when only one side is edited', async () => {
+          offerFindUnique.mockResolvedValue({
+            ...candidateOffer,
+            original_price: 1000,
+            offer_price: 800,
+          });
+          await expect(
+            service.approve('offer-1', 'admin-42', { offerPrice: 1500 }),
+          ).rejects.toThrow('cannot be higher than the original price');
+        });
+
+        it('rejects an end date that is not after the start date', async () => {
+          await expect(
+            service.approve('offer-1', 'admin-42', {
+              startDate: new Date('2026-03-01'),
+              endDate: new Date('2026-02-01'),
+            }),
+          ).rejects.toThrow('End date must be after the start date');
+        });
+
+        it('accepts a coherent price and date edit', async () => {
+          await expect(
+            service.approve('offer-1', 'admin-42', {
+              originalPrice: 30000,
+              offerPrice: 6000,
+              startDate: new Date('2026-02-01'),
+              endDate: new Date('2026-08-01'),
+            }),
+          ).resolves.toBeDefined();
+        });
+      });
+    });
+
+    describe('saveDraft (Module 14 Phase 1)', () => {
+      it('persists edits without publishing — the candidate stays in the queue', async () => {
+        await service.saveDraft('offer-1', 'admin-42', { title: 'Corrected' });
+        expect(offerUpdate).toHaveBeenCalledWith({
+          where: { id: 'offer-1' },
+          data: { title: 'Corrected' },
+        });
+      });
+
+      it('never sets status or review_required', async () => {
+        await service.saveDraft('offer-1', 'admin-42', { category: 'dining' });
+        const data = offerUpdate.mock.calls[0][0].data as Record<
+          string,
+          unknown
+        >;
+        expect(data).not.toHaveProperty('status');
+        expect(data).not.toHaveProperty('review_required');
+      });
+
+      it('records a distinct audit change type, so a draft is tellable from an approval', async () => {
+        await service.saveDraft('offer-1', 'admin-42', { title: 'Corrected' });
+        expect(offerVersionCreate).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            change_type: 'REVIEW_DRAFT_SAVED',
+            changed_by: 'admin-42',
+          }) as unknown,
+        });
+      });
+
+      it('updates the business too, exactly as approve does', async () => {
+        await service.saveDraft('offer-1', 'admin-42', {
+          businessName: 'Spec Gym',
+        });
+        expect(businessUpdate).toHaveBeenCalledWith({
+          where: { id: 'business-1' },
+          data: { business_name: 'Spec Gym' },
+        });
+      });
+
+      it('applies the same coherence checks as approve', async () => {
+        await expect(
+          service.saveDraft('offer-1', 'admin-42', {
+            originalPrice: 100,
+            offerPrice: 500,
+          }),
+        ).rejects.toThrow('cannot be higher than the original price');
+      });
+
+      it('rejects a merchant-created (MANUAL) offer, like every other transition', async () => {
+        offerFindUnique.mockResolvedValue({
+          ...candidateOffer,
+          source: Source.MANUAL,
+        });
+        await expect(
+          service.saveDraft('offer-1', 'admin-42', { title: 'x' }),
+        ).rejects.toThrow('not AI-imported');
       });
     });
 

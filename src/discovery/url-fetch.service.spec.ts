@@ -1,4 +1,5 @@
 import { UrlFetchService } from './url-fetch.service';
+import { RobotsService } from './robots.service';
 import { promises as dnsPromises } from 'dns';
 
 jest.mock('dns', () => ({
@@ -11,9 +12,14 @@ const originalFetch = global.fetch;
 describe('UrlFetchService (SSRF-safe website fetch)', () => {
   let service: UrlFetchService;
   let fetchMock: jest.Mock;
+  let robotsService: { isAllowed: jest.Mock };
 
   beforeEach(() => {
-    service = new UrlFetchService();
+    // Permissive by default so every pre-existing SSRF/redirect/size
+    // assertion below keeps testing exactly what it always did — the
+    // robots check is additive, not a new precondition on those paths.
+    robotsService = { isAllowed: jest.fn().mockResolvedValue({ allowed: true }) };
+    service = new UrlFetchService(robotsService as unknown as RobotsService);
     fetchMock = jest.fn();
     global.fetch = fetchMock;
     dns.lookup.mockReset();
@@ -198,5 +204,83 @@ describe('UrlFetchService (SSRF-safe website fetch)', () => {
     );
     expect(result.html).toContain('Real Site');
     expect(result.finalUrl).toBe('http://real-merchant.example.com/offer');
+  });
+
+  describe('robots.txt compliance (Module 14 Phase 1)', () => {
+    it('refuses to fetch a page robots.txt disallows, and never requests it', async () => {
+      dns.lookup.mockResolvedValue([{ address: '8.8.8.8', family: 4 }]);
+      robotsService.isAllowed.mockResolvedValue({
+        allowed: false,
+        reason: 'blocked.example.com/robots.txt disallows /private',
+      });
+
+      await expectReason(
+        service.fetchHtml('http://blocked.example.com/private'),
+        'ROBOTS_DISALLOWED',
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('surfaces the robots reason as the error message, so the admin sees why', async () => {
+      dns.lookup.mockResolvedValue([{ address: '8.8.8.8', family: 4 }]);
+      robotsService.isAllowed.mockResolvedValue({
+        allowed: false,
+        reason: 'shop.example.com/robots.txt disallows /deals',
+      });
+
+      await expect(
+        service.fetchHtml('http://shop.example.com/deals'),
+      ).rejects.toThrow('shop.example.com/robots.txt disallows /deals');
+    });
+
+    // The SSRF guard is a security control and robots is a policy one —
+    // a blocked host must never receive a request of any kind, including
+    // the robots.txt lookup itself.
+    it('checks SSRF before robots, so a blocked host is never contacted at all', async () => {
+      await expectReason(service.fetchHtml('http://127.0.0.1/'), 'SSRF_BLOCKED');
+      expect(robotsService.isAllowed).not.toHaveBeenCalled();
+    });
+
+    it('re-checks robots on each redirect hop, since a hop can cross origins', async () => {
+      dns.lookup.mockResolvedValue([{ address: '8.8.8.8', family: 4 }]);
+      fetchMock.mockResolvedValueOnce(
+        new Response(null, {
+          status: 302,
+          headers: { location: 'http://elsewhere.example.com/landing' },
+        }),
+      );
+      robotsService.isAllowed
+        .mockResolvedValueOnce({ allowed: true })
+        .mockResolvedValueOnce({
+          allowed: false,
+          reason: 'elsewhere.example.com/robots.txt disallows /landing',
+        });
+
+      await expectReason(
+        service.fetchHtml('http://start.example.com/go'),
+        'ROBOTS_DISALLOWED',
+      );
+      expect(robotsService.isAllowed).toHaveBeenCalledTimes(2);
+      // Only the first hop's page request went out; the second was stopped.
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('identifies itself honestly via User-Agent on the page request', async () => {
+      dns.lookup.mockResolvedValue([{ address: '8.8.8.8', family: 4 }]);
+      fetchMock.mockResolvedValue(
+        new Response('<html><title>ok</title></html>', {
+          status: 200,
+          headers: { 'content-type': 'text/html' },
+        }),
+      );
+
+      await service.fetchHtml('http://real.example.com/');
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          headers: { 'User-Agent': 'PairleyOfferImportBot/1.0' },
+        }),
+      );
+    });
   });
 });

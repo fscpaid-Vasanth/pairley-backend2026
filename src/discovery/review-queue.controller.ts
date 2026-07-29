@@ -10,11 +10,16 @@ import {
 } from '@nestjs/common';
 import {
   IsArray,
+  IsDate,
   IsEnum,
   IsIn,
+  IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   ArrayNotEmpty,
+  MaxLength,
+  Min,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -45,6 +50,12 @@ class RejectDto {
 // validated against the same real 12-item taxonomy offer creation uses;
 // offerType against the real Prisma enum — an admin-supplied override gets
 // exactly the same validation rigor as a merchant's own offer submission.
+//
+// Module 14 Phase 1 widened this to the full editable candidate. Every
+// field keeps the same optional-means-unchanged contract, and every one is
+// validated as strictly as the merchant-facing offer form would validate
+// it — an AI-extracted value that an admin waves through must not be able
+// to enter the catalogue in a shape a merchant could never have submitted.
 class CandidateOverridesDto {
   @IsOptional()
   @IsIn(OFFER_CATEGORIES)
@@ -67,6 +78,100 @@ class CandidateOverridesDto {
   @IsArray()
   @IsString({ each: true })
   keywords?: string[];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  title?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(5000)
+  description?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  subtitle?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  originalPrice?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  offerPrice?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  requiredPeople?: number;
+
+  @IsOptional()
+  @IsDate()
+  @Type(() => Date)
+  startDate?: Date;
+
+  @IsOptional()
+  @IsDate()
+  @Type(() => Date)
+  endDate?: Date;
+
+  @IsOptional()
+  @IsString()
+  coverImage?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  businessName?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  businessCategory?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  businessMobile?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  businessEmail?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  businessAddress?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  businessCity?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  businessState?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(10)
+  businessPincode?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  businessWebsite?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  businessGstNumber?: string;
 }
 
 class ApproveDto {
@@ -75,6 +180,10 @@ class ApproveDto {
   @Type(() => CandidateOverridesDto)
   overrides?: CandidateOverridesDto;
 }
+
+// Same payload shape as approve, deliberately — "save my edits" and
+// "save my edits and publish" differ only in whether the status moves.
+class SaveDraftDto extends ApproveDto {}
 
 class BulkIdsDto {
   @IsArray()
@@ -130,6 +239,18 @@ export class ReviewQueueController {
     @CurrentUser() admin: { sub: string },
   ) {
     return this.reviewQueueService.approve(id, admin.sub, body?.overrides);
+  }
+
+  // Module 14 Phase 1 — persist edits without publishing. The candidate
+  // stays REVIEW_REQUIRED, so it remains in the queue for someone to
+  // finish.
+  @Put(':id/draft')
+  saveDraft(
+    @Param('id') id: string,
+    @Body() body: SaveDraftDto,
+    @CurrentUser() admin: { sub: string },
+  ) {
+    return this.reviewQueueService.saveDraft(id, admin.sub, body?.overrides);
   }
 
   @Put(':id/reject')

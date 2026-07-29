@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { ImportJobRepository } from './import-job.repository';
 import { UrlFetchService } from './url-fetch.service';
+import { RobotsService } from './robots.service';
 import { ContentExtractionService } from './content-extraction.service';
 import { TextExtractionService } from './text-extraction.service';
 import { OcrService } from './ocr.service';
@@ -54,6 +55,11 @@ import { BusinessDuplicatesController } from './business-duplicates.controller';
 // ever acts on DuplicateDetectionService's (Module 11 Phase 2) advisory
 // duplicate_of_business_id/score/reasons: admin-only, reassigns Offers and
 // soft-removes the losing business (never a hard delete).
+// Module 14 Phase 1 — RobotsService gates UrlFetchService: a permission
+// check (may we read this page?) layered on top of the existing SSRF/size/
+// redirect guards (is it safe to read this page?). Also the phase that
+// finally gives the website-import endpoint an admin UI — it has been
+// reachable only by direct API call since Module 9.
 @Module({
   imports: [AuthModule],
   controllers: [
@@ -65,6 +71,7 @@ import { BusinessDuplicatesController } from './business-duplicates.controller';
   ],
   providers: [
     ImportJobRepository,
+    RobotsService,
     UrlFetchService,
     ContentExtractionService,
     TextExtractionService,

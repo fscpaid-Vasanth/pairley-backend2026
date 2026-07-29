@@ -37,6 +37,10 @@ const KNOWN_FAILURE_REASONS = new Set([
   'RESPONSE_TOO_LARGE',
   'REDIRECT_LIMIT',
   'REDIRECT_INVALID',
+  // Module 14 Phase 1 — the site owner told us not to crawl this path. A
+  // correct, expected outcome of a compliance check, not an error worth
+  // paging anyone about.
+  'ROBOTS_DISALLOWED',
   // File import (Module 10 Phase 2)
   'INVALID_FILE_TYPE',
   'FILE_TOO_LARGE',

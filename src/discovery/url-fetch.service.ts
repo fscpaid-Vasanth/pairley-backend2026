@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { isIP } from 'net';
 import { promises as dns } from 'dns';
 import { isBlockedIp } from './ip-guard.util';
+import { RobotsService, CRAWLER_USER_AGENT } from './robots.service';
 
 // Carries a machine-readable `reason` alongside the human message, so
 // callers (ImportOrchestrationService) can tell a routine/expected failure
@@ -39,18 +40,26 @@ const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 export class UrlFetchService {
   private readonly logger = new Logger(UrlFetchService.name);
 
+  constructor(private readonly robotsService: RobotsService) {}
+
   async fetchHtml(rawUrl: string): Promise<{ html: string; finalUrl: string }> {
     let currentUrl = this.parseAndValidateUrl(rawUrl);
 
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
       await this.assertHostResolvesToPublicIp(currentUrl.hostname);
+      // Module 14 Phase 1 — permission check, deliberately after the SSRF
+      // guard above (never send a request, not even for robots.txt, to a
+      // host we've already decided we must not talk to) and before the page
+      // request below. Re-checked on every redirect hop because a redirect
+      // can land on a different origin with an entirely different policy.
+      await this.assertRobotsAllows(currentUrl);
 
       let response: Response;
       try {
         response = await fetch(currentUrl.toString(), {
           redirect: 'manual',
           signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-          headers: { 'User-Agent': 'PairleyOfferImportBot/1.0' },
+          headers: { 'User-Agent': CRAWLER_USER_AGENT },
         });
       } catch (err) {
         const name = err instanceof Error ? err.name : '';
@@ -125,6 +134,17 @@ export class UrlFetchService {
       throw new UrlFetchError('URL is missing a hostname', 'INVALID_URL');
     }
     return url;
+  }
+
+  private async assertRobotsAllows(url: URL): Promise<void> {
+    const decision = await this.robotsService.isAllowed(url.toString());
+    if (decision.allowed) return;
+
+    this.logger.warn(`robots.txt blocked import of ${url.toString()}`);
+    throw new UrlFetchError(
+      decision.reason ?? 'Crawling disallowed by robots.txt',
+      'ROBOTS_DISALLOWED',
+    );
   }
 
   private async assertHostResolvesToPublicIp(hostname: string): Promise<void> {
