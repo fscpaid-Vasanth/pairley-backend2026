@@ -389,9 +389,15 @@ export class OfferController {
     return this.offerService.sendCoBuyMessage(user.sub, dealId, body);
   }
 
+  // Pre-existing gap fixed alongside Module 13: this had no membership check
+  // at all — any authenticated user (any role) could read any deal's
+  // co-buy messages by id, and since anonymization is client-side display
+  // only (see CustomerDealChatPage's getAnonymousName), the raw response
+  // contains real customer names. Now matches sendCoBuyMessage's existing
+  // ownership check: caller must either be interested in the deal or own it.
   @Get('chat/:dealId')
   @UseGuards(JwtAuthGuard)
-  async getCoBuyMessages(@Param('dealId') dealId: string) {
-    return this.offerService.getCoBuyMessages(dealId);
+  async getCoBuyMessages(@CurrentUser() user: any, @Param('dealId') dealId: string) {
+    return this.offerService.getCoBuyMessages(dealId, user.sub, user.role);
   }
 }

@@ -651,6 +651,39 @@ export class OfferService {
     }
 
     const { merchant_verified, is_pairley_exclusive, source, ...rest } = offer;
+
+    // Module 13 — the caller's own interest state, so the frontend can
+    // render "Show Interest" vs "Interest Already Sent" from this response
+    // alone (per requirement: persist across refresh/logout/re-login/device,
+    // driven by the backend, not local component state). Only meaningful for
+    // a logged-in, non-owner customer; a Lead row exists for every offer
+    // type (unlike OfferInterest, which is legacy-matching-types only), so
+    // this is populated uniformly regardless of offer_type.
+    let myLead: {
+      id: string;
+      status: string;
+      unlocked: boolean;
+      created_at: Date;
+    } | null = null;
+    if (requestingUserId && !isOwner) {
+      const lead = await this.prisma.lead.findUnique({
+        where: {
+          customer_id_offer_id: {
+            customer_id: requestingUserId,
+            offer_id: id,
+          },
+        },
+      });
+      if (lead) {
+        myLead = {
+          id: lead.id,
+          status: lead.status,
+          unlocked: !!lead.unlocked_at,
+          created_at: lead.created_at,
+        };
+      }
+    }
+
     const finalized = {
       ...rest,
       badge: computeOfferBadge({
@@ -658,6 +691,7 @@ export class OfferService {
         is_pairley_exclusive,
         source,
       }),
+      myLead,
     };
 
     if (!isOwner) {
@@ -1018,7 +1052,32 @@ export class OfferService {
     return msg;
   }
 
-  async getCoBuyMessages(dealId: string) {
+  async getCoBuyMessages(dealId: string, callerId: string, callerRole: string) {
+    const offer = await this.prisma.offer.findUnique({
+      where: { id: dealId },
+      select: { business_id: true },
+    });
+    if (!offer) {
+      throw new NotFoundException('Deal not found');
+    }
+
+    const isOwner = callerRole === 'Business' && offer.business_id === callerId;
+    if (!isOwner) {
+      const interest = await this.prisma.offerInterest.findUnique({
+        where: {
+          offer_id_customer_id: {
+            offer_id: dealId,
+            customer_id: callerId,
+          },
+        },
+      });
+      if (!interest) {
+        throw new ForbiddenException(
+          'You must show interest in this deal to view messages.',
+        );
+      }
+    }
+
     return this.prisma.coBuyMessage.findMany({
       where: { deal_id: dealId },
       orderBy: { created_at: 'asc' },
@@ -1035,22 +1094,26 @@ export class OfferService {
       throw new NotFoundException('Offer not found');
     }
 
-    // 24-hour duplicate check
-    const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const existingLead = await this.prisma.lead.findFirst({
+    // Module 13 — hard, permanent duplicate block (replaces the old 24-hour
+    // soft window: a customer could previously re-trigger a fresh Lead +
+    // WhatsApp alert for the same offer once a day). Backed by Lead's new
+    // @@unique([customer_id, offer_id]) — this pre-check exists to return a
+    // clean 400 with the existing lead attached rather than surfacing a raw
+    // Prisma P2002 constraint-violation error to the client.
+    const existingLead = await this.prisma.lead.findUnique({
       where: {
-        customer_id: customerId,
-        offer_id: offerId,
-        created_at: {
-          gte: twentyFourHoursAgo,
+        customer_id_offer_id: {
+          customer_id: customerId,
+          offer_id: offerId,
         },
       },
     });
 
     if (existingLead) {
-      throw new BadRequestException(
-        'You have already expressed interest in this deal.',
-      );
+      throw new BadRequestException({
+        message: 'You have already expressed interest in this deal.',
+        lead: existingLead,
+      });
     }
 
     const customer = await this.prisma.customer.findUnique({
@@ -1074,11 +1137,27 @@ export class OfferService {
       },
     });
 
-    // Notify the merchant server-side (DB row + push if a token exists) —
-    // previously the only signal a merchant got was the customer's own
-    // browser opening wa.me popups, which silently do nothing if the tab
-    // closes or the browser blocks them. Fire-and-forget: never blocks or
-    // fails the customer's Show Interest action.
+    // Module 13 — merchant notification channel priority, in order:
+    //   1. In-app notification (below) — unconditional, the primary and
+    //      authoritative signal. This is what "the merchant should always
+    //      manage leads from within Pairley" means in code: nothing here is
+    //      gated by a setting or an external service being configured.
+    //   2. Push — bundled inside sendNotification() itself (looks up the
+    //      business's PushToken rows and sends via FCM if any exist), not a
+    //      separate call.
+    //   3. Email — not yet built. Reserved as the next channel to add
+    //      before WhatsApp in this priority order, should a merchant want a
+    //      channel that doesn't require the app open.
+    //   4. WhatsApp (sendLeadWhatsappAlert, below) — optional and merchant-
+    //      configurable (business.notify_whatsapp), lowest priority, purely
+    //      additive. It was previously the *only* signal a merchant got
+    //      (via the customer's own browser opening wa.me popups, which
+    //      silently did nothing if the tab closed or the popup was
+    //      blocked) — it is now one optional channel among several, never
+    //      the sole or primary one, and never required for the merchant to
+    //      see or act on a lead.
+    // Both calls are fire-and-forget: neither blocks or fails the
+    // customer's Show Interest action.
     this.notificationService
       .sendNotification(
         offer.business_id,
@@ -1088,9 +1167,6 @@ export class OfferService {
       )
       .catch((err) => {});
 
-    // Module 8 — WhatsApp Business API lead alert. Additional channel
-    // alongside the DB/push notification above, not a replacement. Also
-    // fire-and-forget: never blocks or fails Show Interest.
     this.sendLeadWhatsappAlert(offer.business, customer, offer, lead.id).catch(
       () => {},
     );
@@ -1135,43 +1211,31 @@ export class OfferService {
       }
     }
 
-    // Collate target numbers: offer's whatsapp_number, business notification_mobiles, and business mobile
-    const mobiles: string[] = [];
-    if (offer.whatsapp_number) {
-      mobiles.push(offer.whatsapp_number);
-    }
-    if (offer.business.notification_mobiles) {
-      const notifs = offer.business.notification_mobiles
-        .split(',')
-        .map((num) => num.trim())
-        .filter((num) => /^\d{10}$/.test(num));
-      mobiles.push(...notifs);
-    }
-    if (mobiles.length === 0 && offer.business.mobile) {
-      mobiles.push(offer.business.mobile);
-    }
-
-    // Unique target mobiles (up to 3)
-    const uniqueMobiles = [...new Set(mobiles)].slice(0, 3);
-
+    // Module 13 — the frontend no longer opens a customer-side wa.me deep
+    // link on Show Interest (that was the "automatic WhatsApp redirect"
+    // being removed), so it has no use for target merchant phone numbers
+    // any more. The merchant-facing WhatsApp Business API alert above
+    // (sendLeadWhatsappAlert) is unaffected — that's a server-side,
+    // merchant-opt-in channel (business.notify_whatsapp), not the customer
+    // interaction path this module removes.
     return {
       success: true,
       lead,
-      targetMobiles: uniqueMobiles,
       offerName: offer.title,
       shopName: offer.business.business_name,
-      customerName: customer.name,
-      customerMobile: customer.mobile,
     };
   }
 
-  // Module 8 — WhatsApp Business API lead alert to the merchant's verified
-  // number. Requires an approved template (business-initiated messages
-  // outside a 24h session window can't use freeform text) — fails
-  // gracefully and gets logged as FAILED until "new_lead_alert" is
-  // submitted/approved in Meta Business Manager; this is expected, not a
-  // bug, until that external step is done. One retry on failure, no queue
-  // — see Module 8 STEP 1's approved retry-strategy decision.
+  // Module 8, re-scoped by Module 13 to the lowest-priority optional
+  // channel (see the priority comment in createLead above) — WhatsApp
+  // Business API lead alert to the merchant's verified number. Requires an
+  // approved template (business-initiated messages outside a 24h session
+  // window can't use freeform text) — fails gracefully and gets logged as
+  // FAILED until "new_lead_alert" is submitted/approved in Meta Business
+  // Manager; this is expected, not a bug, until that external step is
+  // done, and the merchant is never blocked on it since the in-app
+  // notification + Leads page are unconditional. One retry on failure, no
+  // queue — see Module 8 STEP 1's approved retry-strategy decision.
   private async sendLeadWhatsappAlert(
     business: {
       id: string;

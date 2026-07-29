@@ -1,13 +1,14 @@
 import {
   Controller,
   Get,
+  Post,
   Put,
   Body,
   Param,
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { IsIn } from 'class-validator';
+import { IsIn, IsString, IsNotEmpty, MaxLength } from 'class-validator';
 import { LeadService } from './lead.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -24,6 +25,13 @@ const LEAD_STATUSES = [
 class UpdateLeadStatusDto {
   @IsIn(LEAD_STATUSES)
   status: string;
+}
+
+class SendLeadMessageDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(1000)
+  text: string;
 }
 
 @Controller('leads')
@@ -53,5 +61,34 @@ export class LeadController {
     @Body() body: UpdateLeadStatusDto,
   ) {
     return this.leadService.updateLeadStatus(user.sub, id, body.status as any);
+  }
+
+  // Module 13 — Phase 1 unlock: free, manual, business-only (matches the
+  // controller's class-level @Roles(Role.BUSINESS), no override needed).
+  @Post(':id/unlock')
+  async unlockLead(@CurrentUser() user: any, @Param('id') id: string) {
+    return this.leadService.unlockLead(user.sub, id);
+  }
+
+  // Module 13 — the anonymous 1:1 lead chat. @Roles here overrides the
+  // controller's class-level Role.BUSINESS (RolesGuard uses
+  // getAllAndOverride, so method-level metadata wins) — both the customer
+  // and the business side of a Lead need to reach these two routes; which
+  // specific lead they can touch is enforced inside LeadService via
+  // assertLeadAccess(), not by role alone.
+  @Get(':id/messages')
+  @Roles(Role.CUSTOMER, Role.BUSINESS)
+  async getMessages(@CurrentUser() user: any, @Param('id') id: string) {
+    return this.leadService.getMessages(id, user.sub, user.role);
+  }
+
+  @Post(':id/messages')
+  @Roles(Role.CUSTOMER, Role.BUSINESS)
+  async sendMessage(
+    @CurrentUser() user: any,
+    @Param('id') id: string,
+    @Body() body: SendLeadMessageDto,
+  ) {
+    return this.leadService.sendMessage(id, user.sub, user.role, body.text);
   }
 }

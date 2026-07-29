@@ -512,12 +512,54 @@ model Lead {
   updated_at      DateTime   @default(now()) @updatedAt
   status          LeadStatus @default(NEW)
 
-  // No @relation fields by design — a lead is a standalone record of a
-  // business's own history and must survive the customer/offer/business
-  // rows it references being later deleted (see Module 4's cleanup: leads
-  // do not cascade-delete with the customer, intentionally).
+  // Module 13 — WhatsApp-free interest flow. Null = merchant hasn't
+  // unlocked this lead's contact details yet; set once, on the merchant's
+  // explicit "Unlock Customer Details" action (Phase 1: free, no quota —
+  // see MERCHANT_LEAD_UNLOCK.md). Gates customer_mobile/name on both the
+  // Leads list and the offer-details lead-status response.
+  unlocked_at     DateTime?
+
+  messages LeadMessage[]
+
+  // No @relation fields on Lead itself by design — a lead is a standalone
+  // record of a business's own history and must survive the customer/offer/
+  // business rows it references being later deleted (see Module 4's
+  // cleanup: leads do not cascade-delete with the customer, intentionally).
+  // LeadMessage below is the one exception — a chat thread has no reason to
+  // outlive the lead it belongs to, so it cascades with Lead specifically,
+  // not with Customer/Offer/Business.
+  //
+  // @@unique replaces the old 24h-window soft duplicate check (see
+  // OfferService.createLead) with a real DB-level guarantee: one lead per
+  // customer per offer, permanently, matching Module 13's "customer should
+  // never be able to submit interest multiple times for the same offer."
+  @@unique([customer_id, offer_id])
   @@index([shop_id, status, created_at])
   @@map("leads")
+}
+
+// Module 13 — the 1:1 anonymous chat thread between a customer and the
+// merchant, scoped to a single Lead. Deliberately separate from
+// CoBuyMessage: that model backs the legacy BOGO/group-buy N-person pool
+// chat (Offer.offer_type in LEGACY_MATCHING_OFFER_TYPES), a different
+// feature (coordinating multiple buyers to meet capacity) left untouched by
+// this module. This is a plain two-party thread — one Lead, one customer,
+// one business, free text both directions.
+model LeadMessage {
+  id          String   @id @default(uuid())
+  lead_id     String
+  // Stored instead of a customer/business FK — the reader already knows
+  // which lead (and therefore which two parties) this belongs to; all the
+  // UI needs is which side of the conversation sent it, not who they are
+  // (that's the whole point of the thread being anonymous).
+  sender_role String // 'CUSTOMER' | 'BUSINESS'
+  text        String
+  created_at  DateTime @default(now())
+
+  lead Lead @relation(fields: [lead_id], references: [id], onDelete: Cascade)
+
+  @@index([lead_id, created_at])
+  @@map("lead_messages")
 }
 
 model PushToken {
