@@ -13,6 +13,11 @@ describe('OfferService — Module 13 lead flow', () => {
     customer: { findUnique: jest.fn() },
     offerInterest: { findUnique: jest.fn(), count: jest.fn() },
     coBuyMessage: { findMany: jest.fn() },
+    // Module 14 Phase 3A — getDetails fetches merchant contact in a second,
+    // targeted query, but only for a viewer entitled to see it. These
+    // fixtures use a CLAIMED business, so an authenticated customer now
+    // reaches that branch.
+    business: { findUnique: jest.fn().mockResolvedValue(null) },
   });
 
   const makeNotificationService = () => ({ sendNotification: jest.fn().mockResolvedValue(undefined) });

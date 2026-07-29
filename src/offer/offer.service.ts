@@ -5,6 +5,14 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  PUBLIC_OFFER_FIELDS,
+  OWNER_ONLY_OFFER_FIELDS,
+  PUBLIC_BUSINESS_SELECT,
+  resolveContactAccess,
+  buildBusinessSelect,
+  decorateBusinessContact,
+} from './offerVisibility';
 import { NotificationService } from '../common/services/notification.service';
 import { OtpService } from '../common/services/otp.service';
 import { StorageService } from '../common/services/storage.service';
@@ -72,38 +80,11 @@ function computeOfferBadge(offer: {
   return null;
 }
 
-// Offer scalar fields safe to return from the public/customer-facing read
-// paths (listOffers, getDetails — both unauthenticated endpoints). Excludes
-// `source` and every Pairley 2.0 provenance field (confidence_score,
-// imported_at, review_required, original_import_url, original_import_source,
-// merchant_verified, is_pairley_exclusive, original_poster,
-// generated_offer_card) — customers must never see whether/how an offer was
-// imported, only the computed `badge` field added onto each response below.
-const PUBLIC_OFFER_FIELDS = {
-  id: true,
-  business_id: true,
-  title: true,
-  description: true,
-  offer_type: true,
-  category: true,
-  original_price: true,
-  offer_price: true,
-  required_people: true,
-  joined_people: true,
-  start_date: true,
-  end_date: true,
-  status: true,
-  whatsapp_number: true,
-  offer_image: true,
-  facility_images: true,
-  facility_details: true,
-  cover_image: true,
-  gallery_images: true,
-  geo_lat: true,
-  geo_lng: true,
-  created_at: true,
-  updated_at: true,
-} as const;
+// Module 14 Phase 3A — the public field/contact-visibility policy moved to
+// offerVisibility.ts so it can be unit-tested on its own and so there is
+// exactly one place that decides what a given viewer may see. See that file
+// for why contact columns are omitted from the query rather than blanked
+// out afterwards.
 
 @Injectable()
 export class OfferService {
@@ -504,16 +485,10 @@ export class OfferService {
         merchant_verified: true,
         is_pairley_exclusive: true,
         source: true,
-        business: {
-          select: {
-            business_name: true,
-            city: true,
-            shop_photo: true,
-            mall_name: true,
-            geo_lat: true,
-            geo_lng: true,
-          },
-        },
+        // Module 14 Phase 3A — a browse listing never shows merchant contact
+        // to anyone, regardless of who is asking, so this is unconditionally
+        // the public projection. Contact is a detail-page decision.
+        business: { select: PUBLIC_BUSINESS_SELECT },
       },
       orderBy: { created_at: 'desc' },
     });
@@ -602,24 +577,16 @@ export class OfferService {
         merchant_verified: true,
         is_pairley_exclusive: true,
         source: true,
-        business: {
-          select: {
-            id: true,
-            business_name: true,
-            owner_name: true,
-            mobile: true,
-            email: true,
-            address: true,
-            city: true,
-            state: true,
-            shop_photo: true,
-            // Module 12 Phase 2 — lets the customer-facing deal page decide
-            // whether to show the "Is this your business? Claim it." prompt
-            // (UNCLAIMED only). Additive — every existing consumer of this
-            // response already ignores fields it doesn't recognize.
-            business_status: true,
-          },
-        },
+        // Module 14 Phase 3A — always the public projection on this first
+        // query. Whether the caller may see contact details depends on the
+        // business's own claim status, which is only known once this has
+        // run, so entitled callers get their contact fields in a second,
+        // targeted query below. Contact columns therefore never enter the
+        // process at all for a caller who isn't entitled to them.
+        //
+        // business_status also drives the Module 12 Phase 2 "Is this your
+        // business? Claim it." prompt (UNCLAIMED only).
+        business: { select: PUBLIC_BUSINESS_SELECT },
         interests: {
           select: {
             id: true,
@@ -684,8 +651,30 @@ export class OfferService {
       }
     }
 
+    // Module 14 Phase 3A — merchant contact visibility. Anonymous callers
+    // never receive it; an unclaimed business's details are its own
+    // published information, so Pairley points at the merchant's own site
+    // rather than positioning itself as the gatekeeper to them.
+    const contactAccess = resolveContactAccess(
+      { userId: requestingUserId, role: requestingRole, ownerBusinessId: offer.business_id },
+      offer.business,
+    );
+
+    let businessPayload: Record<string, unknown> | null = offer.business
+      ? { ...offer.business }
+      : null;
+
+    if (contactAccess.canSeeContact && businessPayload) {
+      const contact = await this.prisma.business.findUnique({
+        where: { id: offer.business_id },
+        select: buildBusinessSelect(contactAccess),
+      });
+      if (contact) businessPayload = { ...businessPayload, ...contact };
+    }
+
     const finalized = {
       ...rest,
+      business: decorateBusinessContact(businessPayload, contactAccess),
       badge: computeOfferBadge({
         merchant_verified,
         is_pairley_exclusive,
@@ -714,7 +703,17 @@ export class OfferService {
       },
     });
 
-    return { ...finalized, interests: interestsWithCustomer };
+    // Module 14 Phase 3A — whatsapp_number left PUBLIC_OFFER_FIELDS (it's a
+    // direct merchant contact channel and was previously readable by
+    // anonymous callers through both listOffers and the unguarded
+    // category route). The owner still needs it on their own offer, so it
+    // is fetched here, on the branch that has already established ownership.
+    const ownerFields = await this.prisma.offer.findUnique({
+      where: { id },
+      select: OWNER_ONLY_OFFER_FIELDS,
+    });
+
+    return { ...finalized, ...ownerFields, interests: interestsWithCustomer };
   }
 
   async getOffersByCategory(category: string) {
