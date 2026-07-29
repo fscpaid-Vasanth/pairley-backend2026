@@ -10,6 +10,13 @@ export interface SystemHealthResult {
     database: 'ok' | 'down';
     storage: 'ok' | 'unreachable';
   };
+  // Storage Migration Phase 1 — lets an operator confirm which
+  // CloudStorageProvider is actually active (not just whether it's
+  // reachable) without reading server logs, and see the underlying error
+  // when it isn't. Additive — existing consumers of `checks.storage`
+  // don't need to change.
+  storageProvider: 'mock' | 's3' | 'firebase';
+  storageError?: string;
   release: string;
   environment: string;
   serverTime: string;
@@ -52,6 +59,8 @@ export class SystemHealthService {
         database: databaseOk ? 'ok' : 'down',
         storage: storageResult.ok ? 'ok' : 'unreachable',
       },
+      storageProvider: storageResult.mode,
+      ...(storageResult.error ? { storageError: storageResult.error } : {}),
       release,
       environment,
       serverTime,

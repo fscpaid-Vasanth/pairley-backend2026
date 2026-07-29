@@ -1,32 +1,50 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs';
 import * as path from 'path';
+import { CLOUD_STORAGE_PROVIDER } from './storage-providers/cloud-storage-provider.interface';
+import type { CloudStorageProvider } from './storage-providers/cloud-storage-provider.interface';
+import { S3StorageProvider } from './storage-providers/s3-storage.provider';
+import { FirebaseStorageProvider } from './storage-providers/firebase-storage.provider';
 
+// Storage Migration Phase 1 — StorageService is now a thin facade. Its
+// public API (uploadFile/uploadBase64/getFile/checkHealth) is byte-for-
+// byte unchanged from before this migration — every one of its 9 callers
+// across the app (auth, business, offer, claim-request, import-
+// orchestration, system-health) needs zero changes, since none of them
+// ever depended on *how* the "real" branch talks to a cloud provider, only
+// on this method contract.
+//
+// What changed: the "not mock" branch used to hardcode the AWS SDK inline.
+// It now delegates to whichever CloudStorageProvider was bound at
+// module-build time (see common.module.ts's STORAGE_PROVIDER factory) —
+// S3StorageProvider today, FirebaseStorageProvider available behind the
+// STORAGE_PROVIDER=firebase flag, selected once at startup, not per-call.
+// The USE_MOCK_STORAGE local-disk fallback is untouched — mock mode never
+// touches the injected provider at all.
 @Injectable()
 export class StorageService {
   private readonly logger = new Logger(StorageService.name);
   private readonly useMock: boolean;
   private readonly uploadDir = path.join(process.cwd(), 'uploads');
-  private readonly bucketName: string;
-  private readonly region: string;
-  private readonly accessKeyId: string;
-  private readonly secretAccessKey: string;
 
-  constructor(private configService: ConfigService) {
+  constructor(
+    private configService: ConfigService,
+    @Inject(CLOUD_STORAGE_PROVIDER)
+    private readonly provider: CloudStorageProvider,
+    // Always both available, independent of which one STORAGE_PROVIDER
+    // currently selects as `provider` above (used for writes and for
+    // plain getFile()/checkHealth()). getFileByUrl() below needs to reach
+    // *either* one directly — an S3 URL created before a STORAGE_PROVIDER
+    // flip must still read correctly after the flip, and vice versa.
+    private readonly s3Provider: S3StorageProvider,
+    private readonly firebaseProvider: FirebaseStorageProvider,
+  ) {
     const mockStorageVal = this.configService.get<any>(
       'USE_MOCK_STORAGE',
       true,
     );
     this.useMock = mockStorageVal === true || mockStorageVal === 'true';
-
-    this.bucketName = this.configService.get<string>('AWS_S3_BUCKET_NAME', '');
-    this.region = this.configService.get<string>('AWS_REGION', 'ap-south-1');
-    this.accessKeyId = this.configService.get<string>('AWS_ACCESS_KEY_ID', '');
-    this.secretAccessKey = this.configService.get<string>(
-      'AWS_SECRET_ACCESS_KEY',
-      '',
-    );
 
     if (this.useMock && !fs.existsSync(this.uploadDir)) {
       fs.mkdirSync(this.uploadDir, { recursive: true });
@@ -50,35 +68,7 @@ export class StorageService {
       return `/uploads/${folder}/${fileName}`;
     }
 
-    try {
-      // Real AWS S3 Upload using @aws-sdk/client-s3
-      const { S3Client, PutObjectCommand } = await import('@aws-sdk/client-s3');
-
-      const s3 = new S3Client({
-        region: this.region,
-        credentials: {
-          accessKeyId: this.accessKeyId,
-          secretAccessKey: this.secretAccessKey,
-        },
-      });
-
-      const key = `${folder}/${fileName}`;
-      await s3.send(
-        new PutObjectCommand({
-          Bucket: this.bucketName,
-          Key: key,
-          Body: file.buffer,
-          ContentType: file.mimetype,
-        }),
-      );
-
-      const publicUrl = `https://${this.bucketName}.s3.${this.region}.amazonaws.com/${key}`;
-      this.logger.log(`[AWS S3] Uploaded file to: ${publicUrl}`);
-      return publicUrl;
-    } catch (error) {
-      this.logger.error(`Failed to upload to S3: ${error.message}`);
-      throw new Error(`S3 upload failed: ${error.message}`);
-    }
+    return this.provider.put(file.buffer, folder, fileName, file.mimetype);
   }
 
   async uploadBase64(
@@ -116,31 +106,20 @@ export class StorageService {
 
   // Best-effort, side-effect-free reachability check for /api/health — a
   // HEAD on the bucket itself (no object read/write), short-circuited to
-  // "ok" in mock mode since there's no real S3 to check. Never throws;
-  // callers treat a false result as "degraded," not as blocking health.
+  // "ok" in mock mode since there's no real cloud storage to check. Never
+  // throws; callers treat a false result as "degraded," not as blocking
+  // health.
   async checkHealth(): Promise<{
     ok: boolean;
-    mode: 'mock' | 's3';
+    mode: 'mock' | 's3' | 'firebase';
     error?: string;
   }> {
     if (this.useMock) {
       return { ok: true, mode: 'mock' };
     }
-    try {
-      const { S3Client, HeadBucketCommand } =
-        await import('@aws-sdk/client-s3');
-      const s3 = new S3Client({
-        region: this.region,
-        credentials: {
-          accessKeyId: this.accessKeyId,
-          secretAccessKey: this.secretAccessKey,
-        },
-      });
-      await s3.send(new HeadBucketCommand({ Bucket: this.bucketName }));
-      return { ok: true, mode: 's3' };
-    } catch (error) {
-      return { ok: false, mode: 's3', error: error.message };
-    }
+    const mode = this.configService.get<string>('STORAGE_PROVIDER', 's3');
+    const result = await this.provider.health();
+    return { ...result, mode: mode === 'firebase' ? 'firebase' : 's3' };
   }
 
   async getFile(key: string): Promise<{ buffer: Buffer; contentType: string }> {
@@ -157,39 +136,54 @@ export class StorageService {
       return { buffer, contentType };
     }
 
-    try {
-      const { S3Client, GetObjectCommand } = await import('@aws-sdk/client-s3');
-      const s3 = new S3Client({
-        region: this.region,
-        credentials: {
-          accessKeyId: this.accessKeyId,
-          secretAccessKey: this.secretAccessKey,
-        },
-      });
+    return this.provider.get(key);
+  }
 
-      const response = await s3.send(
-        new GetObjectCommand({
-          Bucket: this.bucketName,
-          Key: key,
-        }),
-      );
+  // Storage Migration Phase 1 (compatibility follow-up) — the admin
+  // document-preview proxy's read path. Unlike every other method here,
+  // this one is deliberately provider-aware by URL shape rather than by
+  // the currently-active STORAGE_PROVIDER: during the migration window,
+  // old records hold S3 URLs and new records hold Firebase URLs
+  // regardless of which provider is "active" for writes right now, and an
+  // admin needs to be able to preview either kind at any time. `getFile()`
+  // above stays exactly as it was — single-provider, used by every other
+  // caller — this is additive, not a replacement.
+  async getFileByUrl(url: string): Promise<{ buffer: Buffer; contentType: string }> {
+    // Same path-traversal guard the controller used to apply itself before
+    // this method existed — moved here since callers no longer see the
+    // raw extracted key to sanitize on their own. Applied to the bare-key
+    // and S3 branches, where the key is a substring of admin-supplied
+    // input; not needed on the Firebase branch, where the key only ever
+    // comes from a URL this app generated itself in put() (see
+    // FirebaseStorageProvider's own resolveKey()).
+    //
+    // path.posix, not the OS-dependent path.normalize/path.join used
+    // elsewhere in this file: object storage keys (S3, Firebase) are
+    // always forward-slash strings regardless of what OS the server
+    // process runs on. The original pre-migration code used the
+    // OS-dependent form here too — harmless in production (Render is
+    // Linux, where the two are identical) but a real bug waiting to
+    // happen anywhere else, and one the new unit tests below caught
+    // immediately on this Windows dev machine.
+    const sanitize = (key: string) =>
+      path.posix.normalize(key).replace(/^(\.\.\/)+/, '');
 
-      const streamToBuffer = (stream: any): Promise<Buffer> =>
-        new Promise((resolve, reject) => {
-          const chunks: any[] = [];
-          stream.on('data', (chunk) => chunks.push(chunk));
-          stream.on('error', reject);
-          stream.on('end', () => resolve(Buffer.concat(chunks)));
-        });
-
-      const buffer = await streamToBuffer(response.Body);
-      return {
-        buffer,
-        contentType: response.ContentType || 'image/png',
-      };
-    } catch (error) {
-      this.logger.error(`Failed to get file from S3: ${error.message}`);
-      throw new Error(`S3 fetch failed: ${error.message}`);
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      const key = url.startsWith('/uploads/') ? url.replace(/^\/uploads\//, '') : url;
+      return this.getFile(sanitize(key));
     }
+
+    const parsedUrl = new URL(url);
+    if (parsedUrl.hostname.includes('.amazonaws.com')) {
+      return this.s3Provider.get(sanitize(parsedUrl.pathname.substring(1)));
+    }
+    if (
+      parsedUrl.hostname === 'firebasestorage.googleapis.com' ||
+      parsedUrl.hostname.endsWith('.firebasestorage.app')
+    ) {
+      return this.firebaseProvider.get(url);
+    }
+
+    throw new Error(`Unrecognized storage URL: ${url}`);
   }
 }

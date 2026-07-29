@@ -29,6 +29,13 @@ class SendOtpDto {
   @IsNotEmpty()
   @Length(10, 15)
   mobile: string;
+
+  // Optional — only used to scope the MERCHANT_OTP_MODE pilot bypass to the
+  // Business flow. Customer/admin callers omit this and are completely
+  // unaffected either way.
+  @IsIn(REGISTRATION_ROLES)
+  @IsOptional()
+  role?: 'Customer' | 'Business';
 }
 
 class VerifyOtpDto {
@@ -41,6 +48,10 @@ class VerifyOtpDto {
   @IsNotEmpty()
   @Length(4, 6)
   code: string;
+
+  @IsIn(REGISTRATION_ROLES)
+  @IsOptional()
+  role?: 'Customer' | 'Business';
 }
 
 class RegisterDto {
@@ -232,13 +243,13 @@ export class AuthController {
   @Post('send-otp')
   @HttpCode(HttpStatus.OK)
   async sendOtp(@Body() body: SendOtpDto) {
-    return this.authService.sendOtp(body.mobile);
+    return this.authService.sendOtp(body.mobile, body.role);
   }
 
   @Post('verify-otp')
   @HttpCode(HttpStatus.OK)
   async verifyOtp(@Body() body: VerifyOtpDto) {
-    return this.authService.verifyOtp(body.mobile, body.code);
+    return this.authService.verifyOtp(body.mobile, body.code, body.role);
   }
 
   @Post('register')

@@ -2,6 +2,12 @@ node_modules
 # Keep environment variables out of version control
 .env
 
+# Firebase service account credentials (FCM push + Storage Migration
+# Phase 1's FirebaseStorageProvider) — never committed, regardless of
+# which of the two supported filenames/patterns is used locally.
+firebase-service-account.json
+*-service-account.json
+
 /generated/prisma
 dist/
 pre_module1_backup_*.json

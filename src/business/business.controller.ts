@@ -107,38 +107,47 @@ export class BusinessController {
     }
 
     try {
-      let key = '';
+      // Storage Migration Phase 1 (compatibility follow-up) — recognizes
+      // both S3 and Firebase Storage URLs, independent of which provider
+      // STORAGE_PROVIDER currently selects for new writes. Anything that
+      // isn't a recognized storage URL (e.g. a WEBSITE-sourced Offer's
+      // original_import_url, which points at an external merchant site,
+      // not our storage) keeps the pre-existing redirect behavior.
       if (url.startsWith('http://') || url.startsWith('https://')) {
+        let parsedUrl: URL;
         try {
-          const parsedUrl = new URL(url);
-          if (parsedUrl.hostname.includes('.amazonaws.com')) {
-            key = parsedUrl.pathname.substring(1);
-          } else {
-            return res.redirect(url);
-          }
+          parsedUrl = new URL(url);
         } catch (e) {
           return res
             .status(HttpStatus.BAD_REQUEST)
             .json({ message: 'Invalid URL format' });
         }
-      } else if (url.startsWith('/uploads/')) {
-        key = url.replace(/^\/uploads\//, '');
-      } else {
-        key = url;
+        const isRecognizedStorageUrl =
+          parsedUrl.hostname.includes('.amazonaws.com') ||
+          parsedUrl.hostname === 'firebasestorage.googleapis.com' ||
+          parsedUrl.hostname.endsWith('.firebasestorage.app');
+        if (!isRecognizedStorageUrl) {
+          return res.redirect(url);
+        }
       }
 
-      // Sanitize key to prevent path traversal
-      const normalizedPath = path.normalize(key).replace(/^(\.\.(\/|\\))+/, '');
-
       const { buffer, contentType } =
-        await this.storageService.getFile(normalizedPath);
+        await this.storageService.getFileByUrl(url);
       res.setHeader('Content-Type', contentType);
 
       if (download === 'true') {
-        const filename = path.basename(normalizedPath);
+        // Derive a filename from whatever's after the last "/" in the
+        // decoded path — works for both a plain S3 key (no encoding) and
+        // a Firebase download URL (folder separators are %2F-encoded).
+        let filename = url;
+        try {
+          filename = decodeURIComponent(new URL(url, 'http://placeholder').pathname);
+        } catch {
+          /* url wasn't a full URL (bare key or /uploads/ path) — use as-is */
+        }
         res.setHeader(
           'Content-Disposition',
-          `attachment; filename="${filename}"`,
+          `attachment; filename="${path.basename(filename)}"`,
         );
       }
 

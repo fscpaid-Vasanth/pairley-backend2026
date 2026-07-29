@@ -4,8 +4,10 @@ import {
   NotFoundException,
   UnauthorizedException,
   OnModuleInit,
+  Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { OtpService } from '../common/services/otp.service';
 import { StorageService } from '../common/services/storage.service';
@@ -15,13 +17,59 @@ import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class AuthService implements OnModuleInit {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private prisma: PrismaService,
     private jwtService: JwtService,
     private otpService: OtpService,
     private storageService: StorageService,
     private notificationService: NotificationService,
+    private configService: ConfigService,
   ) {}
+
+  // Merchant Onboarding Pilot — MERCHANT_OTP_MODE=test replaces real SMS OTP
+  // verification with a fixed MERCHANT_DEFAULT_OTP code, scoped strictly to
+  // role: 'Business' requests. Defaults to 'production' (real OTP flow) so a
+  // deployment with the env var unset or misspelled never silently opens the
+  // bypass. Flip MERCHANT_OTP_MODE back to 'production' (or unset it) on
+  // Render to fully revert — no code changes needed either direction.
+  //
+  // SECURITY NOTE: sendOtp()/verifyOtp() are the same code path used for
+  // both new merchant registration AND returning-merchant login (see
+  // verifyOtp() below), so while this flag is 'test', ANY mobile number
+  // used with role: 'Business' — including an already-approved merchant's —
+  // authenticates with the fixed code, not just first-time signups. This
+  // scope was an explicit, informed decision for the pilot period, not an
+  // oversight; see MERCHANT_OTP_PILOT.md.
+  private isMerchantOtpTestMode(role?: string): boolean {
+    if (role !== 'Business') return false;
+    return this.configService.get<string>('MERCHANT_OTP_MODE', 'production') === 'test';
+  }
+
+  // A merchant awaiting approval may now authenticate and reach their
+  // dashboard — what stays gated is *publishing*, enforced server-side in
+  // OfferService.create() (verification_status must be APPROVED there). This
+  // replaced three separate "!== APPROVED → throw" checks across login(),
+  // verifyOtp() and googleUpsert() that between them locked a pending
+  // merchant out of the product entirely for the 24-48h review window.
+  //
+  // REJECTED remains a hard block: that application was already refused, so
+  // re-admitting it just invites repeat submissions. Kept as one shared rule
+  // so the three entry points can't drift apart.
+  private assertBusinessMayAuthenticate(business: {
+    verification_status: VerificationStatus;
+  }) {
+    if (business.verification_status === VerificationStatus.REJECTED) {
+      throw new UnauthorizedException(
+        'Your merchant account application was not approved. Please contact support@pairley.com for details.',
+      );
+    }
+  }
+
+  private merchantDefaultOtp(): string {
+    return this.configService.get<string>('MERCHANT_DEFAULT_OTP', '1234');
+  }
 
   async onModuleInit() {
     try {
@@ -43,7 +91,20 @@ export class AuthService implements OnModuleInit {
     }
   }
 
-  async sendOtp(mobile: string) {
+  async sendOtp(mobile: string, role?: string) {
+    if (this.isMerchantOtpTestMode(role)) {
+      // Pilot bypass — no DB row, no real SMS. verifyOtp() below checks the
+      // fixed code directly instead of looking one up.
+      this.logger.warn(
+        `[MERCHANT OTP PILOT] Skipping real OTP send for ${mobile} (MERCHANT_OTP_MODE=test)`,
+      );
+      return {
+        success: true,
+        message: 'OTP sent successfully',
+        otpLength: this.merchantDefaultOtp().length,
+      };
+    }
+
     const code = this.otpService.generateOtp();
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes validity
 
@@ -64,23 +125,32 @@ export class AuthService implements OnModuleInit {
     return { success: true, message: 'OTP sent successfully' };
   }
 
-  async verifyOtp(mobile: string, code: string) {
-    // Only a real, unexpired OTP issued via sendOtp() is accepted — no
-    // hardcoded or test-number bypass. In mock mode (USE_MOCK_OTP=true) the
-    // random code is logged server-side by OtpService.sendOtp() instead of
-    // being sent via SMS, but it must still be entered correctly here.
-    const record = await this.prisma.otpVerification.findFirst({
-      where: { mobile, code },
-      orderBy: { created_at: 'desc' },
-    });
+  async verifyOtp(mobile: string, code: string, role?: string) {
+    if (this.isMerchantOtpTestMode(role)) {
+      if (code !== this.merchantDefaultOtp()) {
+        throw new BadRequestException('Invalid OTP code');
+      }
+      this.logger.warn(
+        `[MERCHANT OTP PILOT] Accepted fixed pilot code for ${mobile} (MERCHANT_OTP_MODE=test)`,
+      );
+    } else {
+      // Only a real, unexpired OTP issued via sendOtp() is accepted — no
+      // hardcoded or test-number bypass. In mock mode (USE_MOCK_OTP=true) the
+      // random code is logged server-side by OtpService.sendOtp() instead of
+      // being sent via SMS, but it must still be entered correctly here.
+      const record = await this.prisma.otpVerification.findFirst({
+        where: { mobile, code },
+        orderBy: { created_at: 'desc' },
+      });
 
-    if (!record) {
-      throw new BadRequestException('Invalid OTP code');
+      if (!record) {
+        throw new BadRequestException('Invalid OTP code');
+      }
+      if (new Date() > record.expires_at) {
+        throw new BadRequestException('OTP code has expired');
+      }
+      await this.prisma.otpVerification.deleteMany({ where: { mobile } });
     }
-    if (new Date() > record.expires_at) {
-      throw new BadRequestException('OTP code has expired');
-    }
-    await this.prisma.otpVerification.deleteMany({ where: { mobile } });
 
     // Check if customer or business owner exists with this mobile
     const customer = await this.prisma.customer.findUnique({
@@ -100,9 +170,7 @@ export class AuthService implements OnModuleInit {
     }
 
     if (business) {
-      if (business.verification_status !== VerificationStatus.APPROVED) {
-        throw new BadRequestException('Your merchant account is pending admin approval.');
-      }
+      this.assertBusinessMayAuthenticate(business);
       const token = this.generateToken(
         business.id,
         business.mobile,
@@ -292,9 +360,7 @@ export class AuthService implements OnModuleInit {
       } catch (_) {}
     }
     if (business) {
-      if (business.verification_status !== VerificationStatus.APPROVED) {
-        throw new BadRequestException('Your merchant account is pending admin approval.');
-      }
+      this.assertBusinessMayAuthenticate(business);
       if (searchEmail && (!business.email || business.email !== searchEmail)) {
         business = await this.prisma.business.update({
           where: { id: business.id },
@@ -477,9 +543,7 @@ export class AuthService implements OnModuleInit {
       if (!match) {
         throw new UnauthorizedException('Invalid business credentials');
       }
-      if (business.verification_status !== VerificationStatus.APPROVED) {
-        throw new UnauthorizedException('Your merchant account is pending admin approval.');
-      }
+      this.assertBusinessMayAuthenticate(business);
       const token = this.generateToken(
         business.id,
         business.mobile,
