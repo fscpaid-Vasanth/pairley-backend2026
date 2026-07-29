@@ -553,13 +553,53 @@ model LeadMessage {
   // UI needs is which side of the conversation sent it, not who they are
   // (that's the whole point of the thread being anonymous).
   sender_role String // 'CUSTOMER' | 'BUSINESS'
-  text        String
-  created_at  DateTime @default(now())
+
+  // Module 13 Phase 2 — Deal Coordination Assistant. `text` is always the
+  // final, pre-rendered display string (e.g. "🕒 I will be available on 29
+  // Jul 2026 at 5:30 PM") regardless of type, so the message feed never
+  // needs type-specific rendering logic — new template types are additive
+  // on the backend catalog (see leadMessageTemplates.ts) without touching
+  // this model or the feed UI. `message_type`/`payload` exist for
+  // structured templates that carry real data (SCHEDULE: date+time,
+  // LOCATION: lat+lng for live sharing) — kept for potential future use
+  // (e.g. a map preview) rather than required by anything today.
+  //
+  // Default 'STATEMENT' covers the free-text rows written before this
+  // phase (2 in production, from the original chat implementation) — they
+  // display exactly as before, just without a payload.
+  message_type String @default("STATEMENT") // 'STATEMENT' | 'SCHEDULE' | 'LOCATION'
+  text         String
+  payload      Json?
+
+  created_at DateTime @default(now())
 
   lead Lead @relation(fields: [lead_id], references: [id], onDelete: Cascade)
 
   @@index([lead_id, created_at])
   @@map("lead_messages")
+}
+
+// Module 13 Phase 2 — durable event log behind every structured message
+// sent in the Deal Coordination Assistant (see leadMessageTemplates.ts'
+// analyticsEvents per template, and LeadService.sendMessage which writes
+// these fire-and-forget, same non-blocking pattern as the WhatsApp/
+// notification side-effects elsewhere in this file). Not read by anything
+// today — this is deliberately just the durable log the roadmap's future
+// analytics work will query, per the explicit "log every structured
+// interaction for future analytics" requirement. No @relation to Lead, same
+// reasoning as WhatsAppMessage.related_lead_id: a standalone log entry
+// should survive independently of the lead it references.
+model LeadInteractionEvent {
+  id           String   @id @default(uuid())
+  lead_id      String
+  sender_role  String // 'CUSTOMER' | 'BUSINESS'
+  template_key String // e.g. 'MEETING_WHEN', 'SCHEDULE_AVAILABLE_ON'
+  event_type   String // e.g. 'MEETING_REQUESTED', 'DATE_SHARED', 'LOCATION_SHARED'
+  created_at   DateTime @default(now())
+
+  @@index([lead_id, created_at])
+  @@index([event_type, created_at])
+  @@map("lead_interaction_events")
 }
 
 model PushToken {

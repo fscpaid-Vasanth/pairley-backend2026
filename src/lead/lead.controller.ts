@@ -8,7 +8,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { IsIn, IsString, IsNotEmpty, MaxLength } from 'class-validator';
+import { IsIn, IsString, IsNotEmpty, IsOptional, IsObject } from 'class-validator';
 import { LeadService } from './lead.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -27,11 +27,22 @@ class UpdateLeadStatusDto {
   status: string;
 }
 
+// Module 13 Phase 2 — Deal Coordination Assistant. Replaces the old
+// free-text SendLeadMessageDto ({ text }) — a message is now always a
+// reference to a catalog entry (see leadMessageTemplates.ts), optionally
+// with a structured payload (date+time or lat+lng) for the templates that
+// need one. class-validator only confirms the *shape* here (a non-empty
+// key string, an optional plain object); the actual whitelist/payload
+// validation happens in renderLeadMessage(), which is what really decides
+// whether this is accepted.
 class SendLeadMessageDto {
   @IsString()
   @IsNotEmpty()
-  @MaxLength(1000)
-  text: string;
+  templateKey: string;
+
+  @IsOptional()
+  @IsObject()
+  payload?: Record<string, unknown>;
 }
 
 @Controller('leads')
@@ -47,6 +58,15 @@ export class LeadController {
     @Query('status') status?: string,
   ) {
     return this.leadService.getLeads(user.sub, { offerId, status });
+  }
+
+  // Module 13 Phase 2 — the structured-message catalog, fetched by both
+  // roles before they ever open a specific lead. Declared before ':id'
+  // below so Nest doesn't swallow this literal path as a lead id.
+  @Get('message-templates')
+  @Roles(Role.CUSTOMER, Role.BUSINESS)
+  async getMessageTemplates() {
+    return this.leadService.getMessageTemplates();
   }
 
   @Get(':id')
@@ -89,6 +109,6 @@ export class LeadController {
     @Param('id') id: string,
     @Body() body: SendLeadMessageDto,
   ) {
-    return this.leadService.sendMessage(id, user.sub, user.role, body.text);
+    return this.leadService.sendMessage(id, user.sub, user.role, body.templateKey, body.payload);
   }
 }

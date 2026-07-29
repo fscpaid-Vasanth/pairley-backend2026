@@ -1,11 +1,7 @@
-import {
-  Injectable,
-  NotFoundException,
-  ForbiddenException,
-  BadRequestException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { LeadStatus } from '@prisma/client';
+import { renderLeadMessage, getPublicTemplateCatalog, getAnalyticsEvents } from './leadMessageTemplates';
 
 @Injectable()
 export class LeadService {
@@ -138,24 +134,59 @@ export class LeadService {
     });
   }
 
+  // No lead-specific access check — this is just the catalog of what can be
+  // sent, not the messages themselves, and both roles need it before they
+  // even have a lead open (e.g. to render the composer for the first time).
+  getMessageTemplates() {
+    return getPublicTemplateCatalog();
+  }
+
+  // Module 13 Phase 2 — Deal Coordination Assistant. Free text is gone: the
+  // only way a message reaches the database is via a templateKey resolved
+  // against LEAD_MESSAGE_TEMPLATES (see leadMessageTemplates.ts), which
+  // either has fixed text or validates a structured payload (date+time,
+  // lat+lng). This is the actual enforcement point — a direct API call with
+  // arbitrary `text` in the body is rejected the same as the UI rejecting
+  // typing, not just hidden client-side.
   async sendMessage(
     leadId: string,
     callerId: string,
     callerRole: string,
-    text: string,
+    templateKey: string,
+    payload?: unknown,
   ) {
     await this.assertLeadAccess(leadId, callerId, callerRole);
-    const trimmed = text?.trim();
-    if (!trimmed) {
-      throw new BadRequestException('Message text is required');
-    }
-    return this.prisma.leadMessage.create({
+    const rendered = renderLeadMessage(templateKey, payload);
+    const senderRole = callerRole === 'Business' ? 'BUSINESS' : 'CUSTOMER';
+
+    const message = await this.prisma.leadMessage.create({
       data: {
         lead_id: leadId,
-        sender_role: callerRole === 'Business' ? 'BUSINESS' : 'CUSTOMER',
-        text: trimmed,
+        sender_role: senderRole,
+        message_type: rendered.message_type,
+        text: rendered.text,
+        ...(rendered.payload ? { payload: rendered.payload as any } : {}),
       },
     });
+
+    // Fire-and-forget durable analytics log — never blocks or fails the
+    // send. One row per event the template maps to (a schedule send is
+    // both DATE_SHARED and TIME_SHARED, for instance).
+    const events = getAnalyticsEvents(templateKey);
+    if (events.length > 0) {
+      this.prisma.leadInteractionEvent
+        .createMany({
+          data: events.map((event_type) => ({
+            lead_id: leadId,
+            sender_role: senderRole,
+            template_key: templateKey,
+            event_type,
+          })),
+        })
+        .catch(() => {});
+    }
+
+    return message;
   }
 
   // Fetch-then-compare ownership — same pattern as

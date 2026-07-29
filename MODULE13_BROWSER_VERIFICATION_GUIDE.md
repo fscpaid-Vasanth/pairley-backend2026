@@ -26,9 +26,16 @@ still use the old pool-chat mechanic and aren't part of this module).
   OTP is unaffected by Module 13 or the merchant OTP pilot — real SMS still
   applies unless `USE_MOCK_OTP=true` is set).
 - Keep note of each account's login and, for merchants, the Lead ID each
-  test produces (visible in the URL when you open **Anonymous Chat**, or in
-  the admin dashboard) — the Security section needs a lead/chat ID that
-  belongs to the *other* merchant/customer.
+  test produces (visible in the URL when you open **Chat with Your Offer
+  Partner**, or in the admin dashboard) — the Security section needs a
+  lead/chat ID that belongs to the *other* merchant/customer.
+
+**Note on the chat itself**: this is a guided workflow, not a chat window.
+There is no typing anywhere. All four sections render stacked and always
+visible — no tabs to switch: **Quick Actions** (tap-to-send prompts),
+**Schedule Meeting** (a standing date+time picker), **Share Location**
+(fixed spots + "Share Live Location," which prompts for browser geolocation
+permission), **Offer Status** (deal-progress prompts).
 
 ---
 
@@ -38,11 +45,12 @@ still use the old pool-chat mechanic and aren't part of this module).
 |---|---|---|---|
 | 1 | Login | Log in as **Customer A** | Lands on customer dashboard |
 | 2 | View Offer | Open a non-legacy ACTIVE offer from **Merchant A** | Offer detail page loads; button reads **"Show Interest"** (not "Show Interest & Get Split Pricing" — that copy is legacy-only) |
-| 3 | Show Interest | Click **Show Interest** | Button shows "Sending Interest..." briefly, then the page swaps to the confirmation card: **"✅ Interest Sent Successfully — Merchant has been notified... [ Open Anonymous Chat ]"** — no WhatsApp tab/popup opens anywhere |
+| 3 | Show Interest | Click **Show Interest** | Button shows "Sending Interest..." briefly, then the page swaps to the confirmation card: **"✅ Interest Sent Successfully — Merchant has been notified... [ Chat with Your Offer Partner ]"** — no WhatsApp tab/popup opens anywhere |
 | 4 | Refresh page | Hard refresh (Ctrl/Cmd+Shift+R) | Same confirmation card reappears, headline now **"Interest Already Sent"** (not "Show Interest" again) |
 | 5 | Verify duplicate prevention | Open browser DevTools → Network, or just try clicking "Show Interest" again if it were visible | The button is gone/replaced by the card, so a duplicate click isn't even possible from the UI. Optional: confirm via a second tab open to the same offer at the same time — the second attempt should show "already shown interest," not a second lead |
-| 6 | Open Anonymous Chat | Click **Open Anonymous Chat** | Navigates to `/customer/lead-chat/:leadId`; page shows "Anonymous Chat with Merchant," an empty thread, and a message box |
-| 7 | Send messages | Type a message, send | Message appears immediately on the right (purple bubble, labeled "You"); persists on refresh |
+| 6 | Open Chat | Click **Chat with Your Offer Partner** | Navigates to `/customer/lead-chat/:leadId`; page header reads **"Chat with Your Offer Partner,"** empty thread, four stacked sections below it (Quick Actions / Schedule Meeting / Share Location / Offer Status) — **no tabs, no text input anywhere** |
+| 7 | Send structured messages | Tap **Quick Actions → "📅 When shall we meet?"**; then in the always-visible **Schedule Meeting** widget, pick a date and time, tap **Send** | First message appears immediately as a bubble on the right, labeled "You," reading exactly "📅 When shall we meet?". Second appears as "📅 I will be available on [date] at [time]" — both persist on refresh |
+| 8 | Confirm no free text is reachable | Try to find a keyboard-entry field anywhere on this page, including via browser DevTools | None exists (the date/time inputs are structured pickers, not free text) — every message is a tap on a predefined option |
 
 ## Merchant flow
 
@@ -51,7 +59,7 @@ still use the old pool-chat mechanic and aren't part of this module).
 | 1 | Receive notification | As **Merchant A**, check the bell icon after Customer A's step 3 above | "New Lead!" notification appears within ~5s (polled); clicking it deep-links straight to **Leads** (not home) |
 | 2 | View lead | Go to **Business → Leads** | New row appears: name shown as *"Anonymous Customer"* with a 🔒 icon, offer name, "Interested on [today's date]" |
 | 3 | Verify customer details are masked | Look at the mobile column | Shows **"•••••••••• (locked)"**, not a real number |
-| 4 | Reply through Anonymous Chat | Click **Anonymous Chat** on that row | Navigates to `/business/lead-chat/:leadId`; you see Customer A's message from step 7 above, labeled "Customer." Reply — it should appear labeled "You" on your side and "Merchant" on Customer A's side when they refresh |
+| 4 | Reply through the chat | Click **Chat** on that row | Navigates to `/business/lead-chat/:leadId`, header reads "Chat with Your Offer Partner"; you see Customer A's two messages from steps 7–8 above, labeled "Customer." Reply via **Quick Actions → "👍 Thank you."** — it should appear labeled "You" on your side and "Merchant" on Customer A's side when they refresh. Optionally also try **Offer Status → "✅ Offer redeemed successfully."** to confirm the new section works from the merchant side too |
 | 5 | Unlock customer details | Click **Unlock Customer Details** | Button disappears, replaced by **Contact**; toast confirms; row now shows the real name |
 | 6 | Verify contact information becomes visible | Look at the row again | Real name and real mobile number now shown, no lock icon |
 | 7 | Use the Contact action | Click **Contact** | Opens WhatsApp with a prefilled message to the now-visible number — this is the merchant's own explicit outreach, separate from anything automatic |
