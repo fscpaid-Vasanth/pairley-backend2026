@@ -24,7 +24,9 @@ describe('AuthService.verifyOtp', () => {
 
   const makeConfig = (values: Record<string, any> = {}) =>
     ({
-      get: jest.fn((key: string, def?: any) => (key in values ? values[key] : def)),
+      get: jest.fn((key: string, def?: any) =>
+        key in values ? values[key] : def,
+      ),
     }) as unknown as ConfigService;
 
   const buildService = async (configValues: Record<string, any> = {}) => {
@@ -123,14 +125,20 @@ describe('AuthService.verifyOtp', () => {
 describe('AuthService — Merchant OTP pilot bypass', () => {
   let service: AuthService;
   let prisma: {
-    otpVerification: { findFirst: jest.Mock; deleteMany: jest.Mock; create: jest.Mock };
+    otpVerification: {
+      findFirst: jest.Mock;
+      deleteMany: jest.Mock;
+      create: jest.Mock;
+    };
     customer: { findUnique: jest.Mock };
     business: { findUnique: jest.Mock };
   };
 
   const makeConfig = (values: Record<string, any> = {}) =>
     ({
-      get: jest.fn((key: string, def?: any) => (key in values ? values[key] : def)),
+      get: jest.fn((key: string, def?: any) =>
+        key in values ? values[key] : def,
+      ),
     }) as unknown as ConfigService;
 
   const buildService = async (configValues: Record<string, any>) => {
@@ -148,13 +156,23 @@ describe('AuthService — Merchant OTP pilot bypass', () => {
       providers: [
         AuthService,
         { provide: PrismaService, useValue: prisma },
-        { provide: JwtService, useValue: { sign: jest.fn().mockReturnValue('signed-jwt') } },
+        {
+          provide: JwtService,
+          useValue: { sign: jest.fn().mockReturnValue('signed-jwt') },
+        },
         {
           provide: OtpService,
-          useValue: { generateOtp: jest.fn().mockReturnValue('482913'), sendOtp: jest.fn().mockResolvedValue({ success: true }), useMock: true },
+          useValue: {
+            generateOtp: jest.fn().mockReturnValue('482913'),
+            sendOtp: jest.fn().mockResolvedValue({ success: true }),
+            useMock: true,
+          },
         },
         { provide: StorageService, useValue: {} },
-        { provide: NotificationService, useValue: { sendNotification: jest.fn() } },
+        {
+          provide: NotificationService,
+          useValue: { sendNotification: jest.fn() },
+        },
         { provide: ConfigService, useValue: makeConfig(configValues) },
       ],
     }).compile();
@@ -163,10 +181,17 @@ describe('AuthService — Merchant OTP pilot bypass', () => {
   };
 
   it('sendOtp skips the DB/SMS path entirely for role: Business when MERCHANT_OTP_MODE=test', async () => {
-    service = await buildService({ MERCHANT_OTP_MODE: 'test', MERCHANT_DEFAULT_OTP: '1234' });
+    service = await buildService({
+      MERCHANT_OTP_MODE: 'test',
+      MERCHANT_DEFAULT_OTP: '1234',
+    });
     const result = await service.sendOtp('9000000001', 'Business');
 
-    expect(result).toEqual({ success: true, message: 'OTP sent successfully', otpLength: 4 });
+    expect(result).toEqual({
+      success: true,
+      message: 'OTP sent successfully',
+      otpLength: 4,
+    });
     expect(prisma.otpVerification.create).not.toHaveBeenCalled();
   });
 
@@ -177,7 +202,10 @@ describe('AuthService — Merchant OTP pilot bypass', () => {
   });
 
   it('verifyOtp accepts MERCHANT_DEFAULT_OTP for role: Business without touching OtpVerification', async () => {
-    service = await buildService({ MERCHANT_OTP_MODE: 'test', MERCHANT_DEFAULT_OTP: '1234' });
+    service = await buildService({
+      MERCHANT_OTP_MODE: 'test',
+      MERCHANT_DEFAULT_OTP: '1234',
+    });
     const result = await service.verifyOtp('9000000001', '1234', 'Business');
 
     expect(result.exists).toBe(false); // no business/customer row seeded — still proves the code was accepted
@@ -185,44 +213,56 @@ describe('AuthService — Merchant OTP pilot bypass', () => {
   });
 
   it('verifyOtp rejects any code other than the fixed pilot code for role: Business', async () => {
-    service = await buildService({ MERCHANT_OTP_MODE: 'test', MERCHANT_DEFAULT_OTP: '1234' });
-    await expect(service.verifyOtp('9000000001', '9999', 'Business')).rejects.toThrow(
-      BadRequestException,
-    );
-    await expect(service.verifyOtp('9000000001', '1234a', 'Business')).rejects.toThrow(
-      BadRequestException,
-    );
+    service = await buildService({
+      MERCHANT_OTP_MODE: 'test',
+      MERCHANT_DEFAULT_OTP: '1234',
+    });
+    await expect(
+      service.verifyOtp('9000000001', '9999', 'Business'),
+    ).rejects.toThrow(BadRequestException);
+    await expect(
+      service.verifyOtp('9000000001', '1234a', 'Business'),
+    ).rejects.toThrow(BadRequestException);
   });
 
   it('verifyOtp still requires the real OTP flow for role: Customer even when MERCHANT_OTP_MODE=test', async () => {
-    service = await buildService({ MERCHANT_OTP_MODE: 'test', MERCHANT_DEFAULT_OTP: '1234' });
+    service = await buildService({
+      MERCHANT_OTP_MODE: 'test',
+      MERCHANT_DEFAULT_OTP: '1234',
+    });
     prisma.otpVerification.findFirst.mockResolvedValue(null);
-    await expect(service.verifyOtp('9000000002', '1234', 'Customer')).rejects.toThrow(
-      BadRequestException,
-    );
+    await expect(
+      service.verifyOtp('9000000002', '1234', 'Customer'),
+    ).rejects.toThrow(BadRequestException);
   });
 
   it('verifyOtp still requires the real OTP flow for role: Business when MERCHANT_OTP_MODE is unset (safe default)', async () => {
     service = await buildService({});
     prisma.otpVerification.findFirst.mockResolvedValue(null);
-    await expect(service.verifyOtp('9000000001', '1234', 'Business')).rejects.toThrow(
-      BadRequestException,
-    );
+    await expect(
+      service.verifyOtp('9000000001', '1234', 'Business'),
+    ).rejects.toThrow(BadRequestException);
   });
 
   it('verifyOtp still requires the real OTP flow for role: Business when MERCHANT_OTP_MODE=production explicitly', async () => {
-    service = await buildService({ MERCHANT_OTP_MODE: 'production', MERCHANT_DEFAULT_OTP: '1234' });
+    service = await buildService({
+      MERCHANT_OTP_MODE: 'production',
+      MERCHANT_DEFAULT_OTP: '1234',
+    });
     prisma.otpVerification.findFirst.mockResolvedValue(null);
-    await expect(service.verifyOtp('9000000001', '1234', 'Business')).rejects.toThrow(
-      BadRequestException,
-    );
+    await expect(
+      service.verifyOtp('9000000001', '1234', 'Business'),
+    ).rejects.toThrow(BadRequestException);
   });
 
   it('honors a custom MERCHANT_DEFAULT_OTP value instead of the 1234 default', async () => {
-    service = await buildService({ MERCHANT_OTP_MODE: 'test', MERCHANT_DEFAULT_OTP: '5678' });
-    await expect(service.verifyOtp('9000000001', '1234', 'Business')).rejects.toThrow(
-      BadRequestException,
-    );
+    service = await buildService({
+      MERCHANT_OTP_MODE: 'test',
+      MERCHANT_DEFAULT_OTP: '5678',
+    });
+    await expect(
+      service.verifyOtp('9000000001', '1234', 'Business'),
+    ).rejects.toThrow(BadRequestException);
     const result = await service.verifyOtp('9000000001', '5678', 'Business');
     expect(result.exists).toBe(false);
   });

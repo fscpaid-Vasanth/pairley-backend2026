@@ -82,79 +82,92 @@ const EN: Record<OfferType, CopyStrings> = {
     headline: 'Buy more, pay less per unit',
     body: 'Bulk pricing applies once {{people}} customers have shown interest. You do not need to buy the full quantity alone — show interest and the per-unit price drops for everyone once the requirement is met.',
     soloHeadline: 'Bulk pricing on this pack',
-    soloBody: 'This pack is priced for bulk purchase. Show interest to reserve it and see the full details.',
+    soloBody:
+      'This pack is priced for bulk purchase. Show interest to reserve it and see the full details.',
   },
   MEMBERSHIP_CAMPAIGN: {
     headline: 'Join alongside other members',
     body: 'Membership offers are often priced for groups. Show your interest, and once {{people}} members have joined the same offer, the promotional membership rate becomes available to everyone.',
     soloHeadline: 'Membership offer',
-    soloBody: 'Show interest to reserve this membership rate and receive the joining details.',
+    soloBody:
+      'Show interest to reserve this membership rate and receive the joining details.',
   },
   PACKAGE_DEAL: {
     headline: 'A package built for a group',
     body: 'This package is priced for {{people}} people. Show your interest even if your group is not complete — the package price becomes available once the required participation is reached.',
     soloHeadline: 'A complete package',
-    soloBody: 'Everything in this package at one price. Show interest to reserve it and receive the details.',
+    soloBody:
+      'Everything in this package at one price. Show interest to reserve it and receive the details.',
   },
   COMBO: {
     headline: 'A combo worth sharing',
     body: 'This combo is priced for {{people}} people. Show your interest and the combo price becomes available to everyone once the required participation is reached.',
     soloHeadline: 'Combo price',
-    soloBody: 'Items bundled at a single combo price. Show interest to reserve it.',
+    soloBody:
+      'Items bundled at a single combo price. Show interest to reserve it.',
   },
   FLAT_DISCOUNT: {
     headline: 'A flat saving on this offer',
     body: 'This flat discount applies once {{people}} customers have shown interest. Add yours now and the saving becomes available to everyone as soon as the requirement is met.',
     soloHeadline: 'A flat saving on this offer',
-    soloBody: 'A fixed amount off the usual price. Show interest to reserve this offer and get the merchant details.',
+    soloBody:
+      'A fixed amount off the usual price. Show interest to reserve this offer and get the merchant details.',
   },
   PERCENTAGE_DISCOUNT: {
     headline: 'Percentage off, together',
     body: 'This percentage discount applies once {{people}} customers have shown interest. Show yours now — the discount unlocks for everyone once the required participation is reached.',
     soloHeadline: 'Percentage off',
-    soloBody: 'A percentage off the usual price. Show interest to reserve this offer and get the merchant details.',
+    soloBody:
+      'A percentage off the usual price. Show interest to reserve this offer and get the merchant details.',
   },
   CASHBACK: {
     headline: 'Cashback on this offer',
     body: 'Cashback applies once {{people}} customers have shown interest in this offer. Show yours to be included when the requirement is reached.',
     soloHeadline: 'Cashback on this offer',
-    soloBody: 'Earn cashback on this purchase. Show interest to reserve it and see the conditions.',
+    soloBody:
+      'Earn cashback on this purchase. Show interest to reserve it and see the conditions.',
   },
   FESTIVAL: {
     headline: 'A festival offer worth sharing',
     body: 'Festival pricing applies once {{people}} customers have shown interest. Show yours now so everyone can benefit when the required participation is reached.',
     soloHeadline: 'A festival offer',
-    soloBody: 'Seasonal festival pricing for a limited period. Show interest to reserve it before it ends.',
+    soloBody:
+      'Seasonal festival pricing for a limited period. Show interest to reserve it before it ends.',
   },
   SEASONAL: {
     headline: 'Seasonal pricing',
     body: 'This seasonal price applies once {{people}} customers have shown interest. Add yours now — it becomes available to everyone when the requirement is met.',
     soloHeadline: 'Seasonal pricing',
-    soloBody: 'Available for this season only. Show interest to reserve it before the period ends.',
+    soloBody:
+      'Available for this season only. Show interest to reserve it before the period ends.',
   },
   FLASH_DEAL: {
     headline: 'A short-window offer',
     body: 'This flash offer runs for a limited window and applies once {{people}} customers have shown interest. Show yours early so the requirement can be reached in time.',
     soloHeadline: 'A short-window offer',
-    soloBody: 'Available for a short window only. Show interest now to reserve it.',
+    soloBody:
+      'Available for a short window only. Show interest now to reserve it.',
   },
   LIMITED_QUANTITY: {
     headline: 'Limited quantity available',
     body: 'Only a limited quantity is available at this price, and it applies once {{people}} customers have shown interest. Show yours early so the requirement can be reached while stock lasts.',
     soloHeadline: 'Limited quantity available',
-    soloBody: 'Only a limited quantity is available at this price. Show interest to reserve yours while stock lasts.',
+    soloBody:
+      'Only a limited quantity is available at this price. Show interest to reserve yours while stock lasts.',
   },
   LIMITED_TIME: {
     headline: 'Available for a limited period',
     body: 'This price is available for a limited period and applies once {{people}} customers have shown interest. Show yours early so the requirement can be reached before the period ends.',
     soloHeadline: 'Available for a limited period',
-    soloBody: 'This price is available for a limited period only. Show interest to reserve it before it ends.',
+    soloBody:
+      'This price is available for a limited period only. Show interest to reserve it before it ends.',
   },
   STANDARD: {
     headline: 'Show interest to reserve this offer',
     body: 'Show your interest and this offer is held for you. Once {{people}} customers have shown interest, the promotional pricing becomes available to everyone.',
     soloHeadline: 'Show interest to reserve this offer',
-    soloBody: 'Show your interest and the merchant is notified. You can then coordinate the details directly through Pairley.',
+    soloBody:
+      'Show your interest and the merchant is notified. You can then coordinate the details directly through Pairley.',
   },
 };
 
@@ -183,15 +196,16 @@ function interpolate(template: string, people: number): string {
  * is far better than an offer page that fails to render.
  */
 export function renderPairleyCopy(
-  offerType: OfferType | string,
+  offerType: string,
   context: CopyContext = {},
 ): RenderedCopy {
   const locale = context.locale ?? DEFAULT_LOCALE;
   const table = CATALOG[locale] ?? CATALOG[DEFAULT_LOCALE];
 
-  const key = (offerType as OfferType) in table
-    ? (offerType as OfferType)
-    : OfferType.STANDARD;
+  const key =
+    (offerType as OfferType) in table
+      ? (offerType as OfferType)
+      : OfferType.STANDARD;
   const entry = table[key];
 
   const requiredPeople = Number(context.requiredPeople ?? 0);

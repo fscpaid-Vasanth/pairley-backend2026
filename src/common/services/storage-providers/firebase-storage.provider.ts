@@ -97,7 +97,7 @@ export class FirebaseStorageProvider implements CloudStorageProvider {
     if (!getApps().length) {
       const serviceAccount = this.loadServiceAccount();
       initializeApp({
-        credential: cert(serviceAccount as any),
+        credential: cert(serviceAccount),
         storageBucket: this.bucketName,
       });
     }
@@ -141,7 +141,9 @@ export class FirebaseStorageProvider implements CloudStorageProvider {
       this.logger.log(`[Firebase Storage] Uploaded file to: ${url}`);
       return url;
     } catch (error) {
-      this.logger.error(`Failed to upload to Firebase Storage: ${error.message}`);
+      this.logger.error(
+        `Failed to upload to Firebase Storage: ${error.message}`,
+      );
       throw new Error(`Firebase Storage upload failed: ${error.message}`);
     }
   }
@@ -162,7 +164,9 @@ export class FirebaseStorageProvider implements CloudStorageProvider {
         contentType: metadata.contentType || 'image/png',
       };
     } catch (error) {
-      this.logger.error(`Failed to get file from Firebase Storage: ${error.message}`);
+      this.logger.error(
+        `Failed to get file from Firebase Storage: ${error.message}`,
+      );
       throw new Error(`Firebase Storage fetch failed: ${error.message}`);
     }
   }

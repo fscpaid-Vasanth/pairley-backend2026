@@ -1,5 +1,9 @@
 import { LeadService } from './lead.service';
-import { ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 
 // Module 13 — WhatsApp-free interest flow. Covers the three behaviors that
 // didn't exist before this module: identity masking until a merchant
@@ -72,14 +76,22 @@ describe('LeadService', () => {
     });
 
     it('rejects getLead for a business that does not own the lead', async () => {
-      prisma.lead.findUnique.mockResolvedValue(makeLead({ shop_id: 'other-biz' }));
-      await expect(service.getLead('biz-1', 'lead-1')).rejects.toThrow(ForbiddenException);
+      prisma.lead.findUnique.mockResolvedValue(
+        makeLead({ shop_id: 'other-biz' }),
+      );
+      await expect(service.getLead('biz-1', 'lead-1')).rejects.toThrow(
+        ForbiddenException,
+      );
     });
 
     it('masks the lead returned by updateLeadStatus so a status change cannot leak contact info', async () => {
       prisma.lead.findUnique.mockResolvedValue(makeLead());
       prisma.lead.update.mockResolvedValue(makeLead({ status: 'CONTACTED' }));
-      const result = await service.updateLeadStatus('biz-1', 'lead-1', 'CONTACTED' as any);
+      const result = await service.updateLeadStatus(
+        'biz-1',
+        'lead-1',
+        'CONTACTED',
+      );
       expect(result.customer_mobile).toBeNull();
       expect(result.status).toBe('CONTACTED');
     });
@@ -88,7 +100,9 @@ describe('LeadService', () => {
   describe('unlockLead', () => {
     it('sets unlocked_at for the owning business', async () => {
       prisma.lead.findUnique.mockResolvedValue(makeLead());
-      prisma.lead.update.mockResolvedValue(makeLead({ unlocked_at: new Date() }));
+      prisma.lead.update.mockResolvedValue(
+        makeLead({ unlocked_at: new Date() }),
+      );
       await service.unlockLead('biz-1', 'lead-1');
       expect(prisma.lead.update).toHaveBeenCalledWith({
         where: { id: 'lead-1' },
@@ -97,7 +111,9 @@ describe('LeadService', () => {
     });
 
     it('is idempotent — an already-unlocked lead is not re-written', async () => {
-      const already = makeLead({ unlocked_at: new Date('2026-07-29T09:00:00Z') });
+      const already = makeLead({
+        unlocked_at: new Date('2026-07-29T09:00:00Z'),
+      });
       prisma.lead.findUnique.mockResolvedValue(already);
       const result = await service.unlockLead('biz-1', 'lead-1');
       expect(prisma.lead.update).not.toHaveBeenCalled();
@@ -105,56 +121,66 @@ describe('LeadService', () => {
     });
 
     it('rejects unlocking a lead owned by a different business', async () => {
-      prisma.lead.findUnique.mockResolvedValue(makeLead({ shop_id: 'other-biz' }));
-      await expect(service.unlockLead('biz-1', 'lead-1')).rejects.toThrow(ForbiddenException);
+      prisma.lead.findUnique.mockResolvedValue(
+        makeLead({ shop_id: 'other-biz' }),
+      );
+      await expect(service.unlockLead('biz-1', 'lead-1')).rejects.toThrow(
+        ForbiddenException,
+      );
       expect(prisma.lead.update).not.toHaveBeenCalled();
     });
 
     it('404s for a lead id that does not exist', async () => {
       prisma.lead.findUnique.mockResolvedValue(null);
-      await expect(service.unlockLead('biz-1', 'missing')).rejects.toThrow(NotFoundException);
+      await expect(service.unlockLead('biz-1', 'missing')).rejects.toThrow(
+        NotFoundException,
+      );
     });
   });
 
   describe('anonymous lead chat — access control', () => {
-    it('lets the lead\'s own customer read messages', async () => {
+    it("lets the lead's own customer read messages", async () => {
       prisma.lead.findUnique.mockResolvedValue(makeLead());
       prisma.leadMessage.findMany.mockResolvedValue([]);
-      await expect(service.getMessages('lead-1', 'cust-1', 'Customer')).resolves.toEqual([]);
+      await expect(
+        service.getMessages('lead-1', 'cust-1', 'Customer'),
+      ).resolves.toEqual([]);
     });
 
-    it('lets the lead\'s own business read messages', async () => {
+    it("lets the lead's own business read messages", async () => {
       prisma.lead.findUnique.mockResolvedValue(makeLead());
       prisma.leadMessage.findMany.mockResolvedValue([]);
-      await expect(service.getMessages('lead-1', 'biz-1', 'Business')).resolves.toEqual([]);
+      await expect(
+        service.getMessages('lead-1', 'biz-1', 'Business'),
+      ).resolves.toEqual([]);
     });
 
     it('rejects a different customer entirely', async () => {
       prisma.lead.findUnique.mockResolvedValue(makeLead());
-      await expect(service.getMessages('lead-1', 'someone-else', 'Customer')).rejects.toThrow(
-        ForbiddenException,
-      );
+      await expect(
+        service.getMessages('lead-1', 'someone-else', 'Customer'),
+      ).rejects.toThrow(ForbiddenException);
     });
 
     it('rejects a different business — the core case: Role.BUSINESS alone is not enough', async () => {
       prisma.lead.findUnique.mockResolvedValue(makeLead());
-      await expect(service.getMessages('lead-1', 'other-biz', 'Business')).rejects.toThrow(
-        ForbiddenException,
-      );
+      await expect(
+        service.getMessages('lead-1', 'other-biz', 'Business'),
+      ).rejects.toThrow(ForbiddenException);
     });
 
     it('rejects an Admin caller too — this thread has exactly two parties, not three', async () => {
       prisma.lead.findUnique.mockResolvedValue(makeLead());
-      await expect(service.getMessages('lead-1', 'admin-1', 'Admin')).rejects.toThrow(
-        ForbiddenException,
-      );
+      await expect(
+        service.getMessages('lead-1', 'admin-1', 'Admin'),
+      ).rejects.toThrow(ForbiddenException);
     });
 
     it('404s for a nonexistent lead rather than leaking a 403', async () => {
       prisma.lead.findUnique.mockResolvedValue(null);
-      await expect(service.getMessages('missing', 'cust-1', 'Customer')).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(
+        service.getMessages('missing', 'cust-1', 'Customer'),
+      ).rejects.toThrow(NotFoundException);
     });
 
     // Module 13 Phase 2 — sendMessage now only accepts a whitelisted
@@ -179,7 +205,12 @@ describe('LeadService', () => {
     it('tags a business-sent message sender_role BUSINESS', async () => {
       prisma.lead.findUnique.mockResolvedValue(makeLead());
       prisma.leadMessage.create.mockResolvedValue({ id: 'msg-2' });
-      await service.sendMessage('lead-1', 'biz-1', 'Business', 'CONFIRM_THANKS');
+      await service.sendMessage(
+        'lead-1',
+        'biz-1',
+        'Business',
+        'CONFIRM_THANKS',
+      );
       expect(prisma.leadMessage.create).toHaveBeenCalledWith({
         data: {
           lead_id: 'lead-1',
@@ -193,10 +224,16 @@ describe('LeadService', () => {
     it('renders the SCHEDULE template and includes the payload', async () => {
       prisma.lead.findUnique.mockResolvedValue(makeLead());
       prisma.leadMessage.create.mockResolvedValue({ id: 'msg-3' });
-      await service.sendMessage('lead-1', 'cust-1', 'Customer', 'SCHEDULE_AVAILABLE_ON', {
-        date: '2026-07-29',
-        time: '17:30',
-      });
+      await service.sendMessage(
+        'lead-1',
+        'cust-1',
+        'Customer',
+        'SCHEDULE_AVAILABLE_ON',
+        {
+          date: '2026-07-29',
+          time: '17:30',
+        },
+      );
       expect(prisma.leadMessage.create).toHaveBeenCalledWith({
         data: {
           lead_id: 'lead-1',
@@ -211,7 +248,12 @@ describe('LeadService', () => {
     it('rejects an unknown template key — free text can no longer reach the database', async () => {
       prisma.lead.findUnique.mockResolvedValue(makeLead());
       await expect(
-        service.sendMessage('lead-1', 'cust-1', 'Customer', 'Is this still available?'),
+        service.sendMessage(
+          'lead-1',
+          'cust-1',
+          'Customer',
+          'Is this still available?',
+        ),
       ).rejects.toThrow(BadRequestException);
       expect(prisma.leadMessage.create).not.toHaveBeenCalled();
     });
@@ -219,7 +261,13 @@ describe('LeadService', () => {
     it('rejects a SCHEDULE template with a missing/invalid payload', async () => {
       prisma.lead.findUnique.mockResolvedValue(makeLead());
       await expect(
-        service.sendMessage('lead-1', 'cust-1', 'Customer', 'SCHEDULE_AVAILABLE_ON', undefined),
+        service.sendMessage(
+          'lead-1',
+          'cust-1',
+          'Customer',
+          'SCHEDULE_AVAILABLE_ON',
+          undefined,
+        ),
       ).rejects.toThrow(BadRequestException);
       expect(prisma.leadMessage.create).not.toHaveBeenCalled();
     });
@@ -230,10 +278,20 @@ describe('LeadService', () => {
       it('logs a single event for a plain statement template', async () => {
         prisma.lead.findUnique.mockResolvedValue(makeLead());
         prisma.leadMessage.create.mockResolvedValue({ id: 'msg-4' });
-        await service.sendMessage('lead-1', 'cust-1', 'Customer', 'MEETING_WHEN');
+        await service.sendMessage(
+          'lead-1',
+          'cust-1',
+          'Customer',
+          'MEETING_WHEN',
+        );
         expect(prisma.leadInteractionEvent.createMany).toHaveBeenCalledWith({
           data: [
-            { lead_id: 'lead-1', sender_role: 'CUSTOMER', template_key: 'MEETING_WHEN', event_type: 'MEETING_REQUESTED' },
+            {
+              lead_id: 'lead-1',
+              sender_role: 'CUSTOMER',
+              template_key: 'MEETING_WHEN',
+              event_type: 'MEETING_REQUESTED',
+            },
           ],
         });
       });
@@ -241,14 +299,30 @@ describe('LeadService', () => {
       it('logs two events for a schedule send (date + time)', async () => {
         prisma.lead.findUnique.mockResolvedValue(makeLead());
         prisma.leadMessage.create.mockResolvedValue({ id: 'msg-5' });
-        await service.sendMessage('lead-1', 'biz-1', 'Business', 'SCHEDULE_AVAILABLE_ON', {
-          date: '2026-07-29',
-          time: '17:30',
-        });
+        await service.sendMessage(
+          'lead-1',
+          'biz-1',
+          'Business',
+          'SCHEDULE_AVAILABLE_ON',
+          {
+            date: '2026-07-29',
+            time: '17:30',
+          },
+        );
         expect(prisma.leadInteractionEvent.createMany).toHaveBeenCalledWith({
           data: [
-            { lead_id: 'lead-1', sender_role: 'BUSINESS', template_key: 'SCHEDULE_AVAILABLE_ON', event_type: 'DATE_SHARED' },
-            { lead_id: 'lead-1', sender_role: 'BUSINESS', template_key: 'SCHEDULE_AVAILABLE_ON', event_type: 'TIME_SHARED' },
+            {
+              lead_id: 'lead-1',
+              sender_role: 'BUSINESS',
+              template_key: 'SCHEDULE_AVAILABLE_ON',
+              event_type: 'DATE_SHARED',
+            },
+            {
+              lead_id: 'lead-1',
+              sender_role: 'BUSINESS',
+              template_key: 'SCHEDULE_AVAILABLE_ON',
+              event_type: 'TIME_SHARED',
+            },
           ],
         });
       });
@@ -256,9 +330,16 @@ describe('LeadService', () => {
       it('never blocks or fails the send if event logging itself rejects', async () => {
         prisma.lead.findUnique.mockResolvedValue(makeLead());
         prisma.leadMessage.create.mockResolvedValue({ id: 'msg-6' });
-        prisma.leadInteractionEvent.createMany.mockRejectedValue(new Error('db down'));
+        prisma.leadInteractionEvent.createMany.mockRejectedValue(
+          new Error('db down'),
+        );
         await expect(
-          service.sendMessage('lead-1', 'cust-1', 'Customer', 'OFFER_COLLECTED'),
+          service.sendMessage(
+            'lead-1',
+            'cust-1',
+            'Customer',
+            'OFFER_COLLECTED',
+          ),
         ).resolves.toEqual({ id: 'msg-6' });
       });
     });
@@ -266,7 +347,12 @@ describe('LeadService', () => {
     it('rejects a message from someone who is not a party to the lead', async () => {
       prisma.lead.findUnique.mockResolvedValue(makeLead());
       await expect(
-        service.sendMessage('lead-1', 'other-biz', 'Business', 'CONFIRM_THANKS'),
+        service.sendMessage(
+          'lead-1',
+          'other-biz',
+          'Business',
+          'CONFIRM_THANKS',
+        ),
       ).rejects.toThrow(ForbiddenException);
       expect(prisma.leadMessage.create).not.toHaveBeenCalled();
     });

@@ -43,7 +43,11 @@ export class PaymentController {
 
   @Post('verify')
   async verify(@Body() body: VerifyPaymentDto) {
-    return this.paymentModuleService.verify(body.paymentId, body.orderId, body.signature);
+    return this.paymentModuleService.verify(
+      body.paymentId,
+      body.orderId,
+      body.signature,
+    );
   }
 
   @Get('history')

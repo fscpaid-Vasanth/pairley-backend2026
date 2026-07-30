@@ -17,3 +17,6 @@ pre_module2_backup_*.json
 # (Module 10) — a runtime cache artifact, not source; re-downloaded
 # automatically wherever the app runs.
 *.traineddata
+
+# Local banner render output from Module 14 verification runs — never committed.
+banner-out/

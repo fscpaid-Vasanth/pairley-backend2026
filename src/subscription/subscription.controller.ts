@@ -35,7 +35,11 @@ export class SubscriptionController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.BUSINESS)
   async subscribe(@CurrentUser() user: any, @Body() body: SubscribeDto) {
-    return this.subscriptionService.subscribe(user.sub, body.planName, body.paymentReference);
+    return this.subscriptionService.subscribe(
+      user.sub,
+      body.planName,
+      body.paymentReference,
+    );
   }
 
   @Post('renew')

@@ -1,7 +1,15 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { LeadStatus } from '@prisma/client';
-import { renderLeadMessage, getPublicTemplateCatalog, getAnalyticsEvents } from './leadMessageTemplates';
+import {
+  renderLeadMessage,
+  getPublicTemplateCatalog,
+  getAnalyticsEvents,
+} from './leadMessageTemplates';
 
 @Injectable()
 export class LeadService {
@@ -19,12 +27,18 @@ export class LeadService {
       customer_name: string;
       customer_mobile: string;
     },
-  >(lead: T): Omit<T, 'customer_name' | 'customer_mobile'> & {
+  >(
+    lead: T,
+  ): Omit<T, 'customer_name' | 'customer_mobile'> & {
     customer_name: string;
     customer_mobile: string | null;
   } {
     if (lead.unlocked_at) return lead;
-    return { ...lead, customer_name: 'Anonymous Customer', customer_mobile: null };
+    return {
+      ...lead,
+      customer_name: 'Anonymous Customer',
+      customer_mobile: null,
+    };
   }
 
   // Scoped directly by the caller's own business id (JWT sub) — same
@@ -116,7 +130,8 @@ export class LeadService {
     if (!lead) {
       throw new NotFoundException('Lead not found');
     }
-    const isCustomer = callerRole === 'Customer' && lead.customer_id === callerId;
+    const isCustomer =
+      callerRole === 'Customer' && lead.customer_id === callerId;
     const isBusiness = callerRole === 'Business' && lead.shop_id === callerId;
     if (!isCustomer && !isBusiness) {
       throw new ForbiddenException(

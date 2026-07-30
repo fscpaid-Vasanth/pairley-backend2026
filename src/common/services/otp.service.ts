@@ -17,12 +17,20 @@ export class OtpService {
     this.apiKey = this.configService.get<string>('MSG91_API_KEY', '');
     this.senderId = this.configService.get<string>('MSG91_SENDER_ID', 'PAIRLY');
     this.templateId = this.configService.get<string>('MSG91_TEMPLATE_ID', '');
-    this.smsTemplateId = this.configService.get<string>('MSG91_SMS_TEMPLATE_ID', '');
+    this.smsTemplateId = this.configService.get<string>(
+      'MSG91_SMS_TEMPLATE_ID',
+      '',
+    );
   }
 
-  async sendOtp(mobile: string, code: string): Promise<{ success: boolean; error?: string }> {
+  async sendOtp(
+    mobile: string,
+    code: string,
+  ): Promise<{ success: boolean; error?: string }> {
     if (this.useMock) {
-      this.logger.log(`[MOCK OTP] Sending OTP ${code} to mobile number ${mobile}`);
+      this.logger.log(
+        `[MOCK OTP] Sending OTP ${code} to mobile number ${mobile}`,
+      );
       return { success: true };
     }
 
@@ -30,20 +38,29 @@ export class OtpService {
       const formattedMobile = mobile.startsWith('91') ? mobile : `91${mobile}`;
       const url = `https://control.msg91.com/api/v5/otp?template_id=${this.templateId}&mobile=${formattedMobile}&otp=${code}&sender=${this.senderId}`;
 
-      this.logger.log(`[MSG91] Sending OTP to ${formattedMobile}, template: ${this.templateId}, sender: ${this.senderId}`);
+      this.logger.log(
+        `[MSG91] Sending OTP to ${formattedMobile}, template: ${this.templateId}, sender: ${this.senderId}`,
+      );
 
       const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'authkey': this.apiKey,
+          authkey: this.apiKey,
         },
       });
 
-      const result = await response.json() as { type?: string; message?: string; request_id?: string; code?: string | number };
+      const result = (await response.json()) as {
+        type?: string;
+        message?: string;
+        request_id?: string;
+        code?: string | number;
+      };
 
       if (result.type === 'success' || result.request_id) {
-        this.logger.log(`[MSG91] OTP sent successfully to ${formattedMobile}, request_id: ${result.request_id || 'N/A'}`);
+        this.logger.log(
+          `[MSG91] OTP sent successfully to ${formattedMobile}, request_id: ${result.request_id || 'N/A'}`,
+        );
         return { success: true };
       }
 
@@ -52,16 +69,20 @@ export class OtpService {
       return { success: false, error: errorMsg };
     } catch (error) {
       this.logger.error(`Failed to send OTP via MSG91: ${error.message}`);
-      return { success: false, error: `Network/API connection error: ${error.message}` };
+      return {
+        success: false,
+        error: `Network/API connection error: ${error.message}`,
+      };
     }
   }
 
   private getMsg91ErrorMessage(result: any): string {
-    if (!result) return 'Unknown error occurred while contacting the OTP provider';
-    
+    if (!result)
+      return 'Unknown error occurred while contacting the OTP provider';
+
     const code = String(result.code || '').trim();
     const message = String(result.message || '').trim();
-    
+
     const errorMap: Record<string, string> = {
       '101': 'Missing mobile number',
       '102': 'Missing message content',
@@ -100,8 +121,13 @@ export class OtpService {
     if (lowerMsg.includes('authkey') || lowerMsg.includes('auth key')) {
       return `${errorMap['207']} (MSG91 Details: ${message})`;
     }
-    if (lowerMsg.includes('mobile') || lowerMsg.includes('phone') || lowerMsg.includes('number')) {
-      if (lowerMsg.includes('missing')) return `${errorMap['101']} (MSG91 Details: ${message})`;
+    if (
+      lowerMsg.includes('mobile') ||
+      lowerMsg.includes('phone') ||
+      lowerMsg.includes('number')
+    ) {
+      if (lowerMsg.includes('missing'))
+        return `${errorMap['101']} (MSG91 Details: ${message})`;
       return `${errorMap['202']} (MSG91 Details: ${message})`;
     }
     if (lowerMsg.includes('template')) {
@@ -113,7 +139,10 @@ export class OtpService {
     if (lowerMsg.includes('sender')) {
       return `${errorMap['203']} (MSG91 Details: ${message})`;
     }
-    if (lowerMsg.includes('ip') && (lowerMsg.includes('whitelist') || lowerMsg.includes('blacklist'))) {
+    if (
+      lowerMsg.includes('ip') &&
+      (lowerMsg.includes('whitelist') || lowerMsg.includes('blacklist'))
+    ) {
       return `${errorMap['208']} (MSG91 Details: ${message})`;
     }
     if (lowerMsg.includes('duplicate')) {
@@ -126,13 +155,17 @@ export class OtpService {
   async sendSms(mobile: string, message: string): Promise<boolean> {
     const formattedMobile = mobile.startsWith('91') ? mobile : `91${mobile}`;
     if (this.useMock) {
-      this.logger.log(`[MOCK SMS] Sending SMS to ${formattedMobile}: "${message}"`);
+      this.logger.log(
+        `[MOCK SMS] Sending SMS to ${formattedMobile}: "${message}"`,
+      );
       return true;
     }
 
     // If no SMS template configured, fall back to mock logging to prevent matching transaction crashes
     if (!this.smsTemplateId) {
-      this.logger.warn(`[MOCK MSG91 SMS] MSG91_SMS_TEMPLATE_ID is not configured. Mocking SMS to ${formattedMobile}: "${message}"`);
+      this.logger.warn(
+        `[MOCK MSG91 SMS] MSG91_SMS_TEMPLATE_ID is not configured. Mocking SMS to ${formattedMobile}: "${message}"`,
+      );
       return true;
     }
     const smsTemplate = this.smsTemplateId;
@@ -150,19 +183,23 @@ export class OtpService {
         ],
       };
 
-      this.logger.log(`[MSG91 SMS] Sending to ${formattedMobile}, template: ${smsTemplate}`);
+      this.logger.log(
+        `[MSG91 SMS] Sending to ${formattedMobile}, template: ${smsTemplate}`,
+      );
 
       const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'authkey': this.apiKey,
+          authkey: this.apiKey,
         },
         body: JSON.stringify(payload),
       });
 
       const result = await response.json();
-      this.logger.log(`[MSG91 SMS] Sent to ${formattedMobile}, status: ${JSON.stringify(result)}`);
+      this.logger.log(
+        `[MSG91 SMS] Sent to ${formattedMobile}, status: ${JSON.stringify(result)}`,
+      );
       return true;
     } catch (error) {
       this.logger.error(`Failed to send SMS via MSG91: ${error.message}`);

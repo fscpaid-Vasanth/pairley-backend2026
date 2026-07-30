@@ -128,8 +128,8 @@ export const CONTACT_BUSINESS_SELECT = {
 export function isOwner(viewer: ViewerContext): boolean {
   return Boolean(
     viewer.userId &&
-      viewer.ownerBusinessId &&
-      viewer.userId === viewer.ownerBusinessId,
+    viewer.ownerBusinessId &&
+    viewer.userId === viewer.ownerBusinessId,
   );
 }
 
@@ -152,7 +152,7 @@ export function isAdmin(viewer: ViewerContext): boolean {
  */
 export function resolveContactAccess(
   viewer: ViewerContext,
-  business: { business_status?: BusinessStatus | string | null } | null,
+  business: { business_status?: string | null } | null,
 ): ContactAccess {
   if (isOwner(viewer) || isAdmin(viewer)) {
     return { canSeeContact: true, notice: 'AVAILABLE' };

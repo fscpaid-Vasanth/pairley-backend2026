@@ -1,5 +1,9 @@
 import { OfferService } from './offer.service';
-import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 
 // Module 13 — WhatsApp-free interest flow. Scoped to just the three methods
 // this module changed (createLead's dedupe + response shape, getDetails'
@@ -20,8 +24,12 @@ describe('OfferService — Module 13 lead flow', () => {
     business: { findUnique: jest.fn().mockResolvedValue(null) },
   });
 
-  const makeNotificationService = () => ({ sendNotification: jest.fn().mockResolvedValue(undefined) });
-  const makeWhatsappService = () => ({ getSenderPhoneNumberId: jest.fn().mockReturnValue(null) });
+  const makeNotificationService = () => ({
+    sendNotification: jest.fn().mockResolvedValue(undefined),
+  });
+  const makeWhatsappService = () => ({
+    getSenderPhoneNumberId: jest.fn().mockReturnValue(null),
+  });
 
   let prisma: ReturnType<typeof makePrisma>;
   let notificationService: ReturnType<typeof makeNotificationService>;
@@ -48,7 +56,11 @@ describe('OfferService — Module 13 lead flow', () => {
       business_id: 'biz-1',
       offer_type: 'PERCENTAGE_DISCOUNT', // non-legacy — Lead-only path
       whatsapp_number: null,
-      business: { business_name: 'Corner Store', notification_mobiles: null, mobile: '9000000000' },
+      business: {
+        business_name: 'Corner Store',
+        notification_mobiles: null,
+        mobile: '9000000000',
+      },
     };
     const customer = { id: 'cust-1', name: 'Asha', mobile: '9111111111' };
 
@@ -57,8 +69,13 @@ describe('OfferService — Module 13 lead flow', () => {
       const existing = { id: 'lead-existing', status: 'NEW' };
       prisma.lead.findUnique.mockResolvedValue(existing);
 
-      await expect(service.createLead('cust-1', 'offer-1')).rejects.toMatchObject({
-        response: { message: 'You have already expressed interest in this deal.', lead: existing },
+      await expect(
+        service.createLead('cust-1', 'offer-1'),
+      ).rejects.toMatchObject({
+        response: {
+          message: 'You have already expressed interest in this deal.',
+          lead: existing,
+        },
       });
       expect(prisma.lead.create).not.toHaveBeenCalled();
     });
@@ -179,37 +196,41 @@ describe('OfferService — Module 13 lead flow', () => {
     it('allows the owning business to read messages', async () => {
       prisma.offer.findUnique.mockResolvedValue({ business_id: 'biz-1' });
       prisma.coBuyMessage.findMany.mockResolvedValue([]);
-      await expect(service.getCoBuyMessages('offer-1', 'biz-1', 'Business')).resolves.toEqual([]);
+      await expect(
+        service.getCoBuyMessages('offer-1', 'biz-1', 'Business'),
+      ).resolves.toEqual([]);
     });
 
     it('allows a customer who has an OfferInterest on the deal', async () => {
       prisma.offer.findUnique.mockResolvedValue({ business_id: 'biz-1' });
       prisma.offerInterest.findUnique.mockResolvedValue({ id: 'interest-1' });
       prisma.coBuyMessage.findMany.mockResolvedValue([]);
-      await expect(service.getCoBuyMessages('offer-1', 'cust-1', 'Customer')).resolves.toEqual([]);
+      await expect(
+        service.getCoBuyMessages('offer-1', 'cust-1', 'Customer'),
+      ).resolves.toEqual([]);
     });
 
     it('rejects a customer with no interest in the deal', async () => {
       prisma.offer.findUnique.mockResolvedValue({ business_id: 'biz-1' });
       prisma.offerInterest.findUnique.mockResolvedValue(null);
-      await expect(service.getCoBuyMessages('offer-1', 'cust-1', 'Customer')).rejects.toThrow(
-        ForbiddenException,
-      );
+      await expect(
+        service.getCoBuyMessages('offer-1', 'cust-1', 'Customer'),
+      ).rejects.toThrow(ForbiddenException);
     });
 
     it('rejects a different business entirely', async () => {
       prisma.offer.findUnique.mockResolvedValue({ business_id: 'biz-1' });
       prisma.offerInterest.findUnique.mockResolvedValue(null);
-      await expect(service.getCoBuyMessages('offer-1', 'other-biz', 'Business')).rejects.toThrow(
-        ForbiddenException,
-      );
+      await expect(
+        service.getCoBuyMessages('offer-1', 'other-biz', 'Business'),
+      ).rejects.toThrow(ForbiddenException);
     });
 
     it('404s for a deal that does not exist', async () => {
       prisma.offer.findUnique.mockResolvedValue(null);
-      await expect(service.getCoBuyMessages('missing', 'cust-1', 'Customer')).rejects.toThrow(
-        NotFoundException,
-      );
+      await expect(
+        service.getCoBuyMessages('missing', 'cust-1', 'Customer'),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 });

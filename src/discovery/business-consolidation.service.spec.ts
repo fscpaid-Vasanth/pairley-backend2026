@@ -50,9 +50,9 @@ describe('BusinessConsolidationService', () => {
     offerUpdateMany = jest.fn().mockResolvedValue({ count: 3 });
     claimRequestFindFirst = jest.fn().mockResolvedValue(null);
     claimRequestFindMany = jest.fn().mockResolvedValue([]);
-    transaction = jest.fn().mockImplementation((ops: Promise<unknown>[]) =>
-      Promise.all(ops),
-    );
+    transaction = jest
+      .fn()
+      .mockImplementation((ops: Promise<unknown>[]) => Promise.all(ops));
 
     const prisma = {
       business: {
@@ -95,7 +95,9 @@ describe('BusinessConsolidationService', () => {
 
     it('defaults canonical_business_id to the stored duplicate_of_business_id when omitted', async () => {
       await service.consolidate('dup-1', undefined, 'admin-1');
-      expect(businessFindUnique).toHaveBeenCalledWith({ where: { id: 'canon-1' } });
+      expect(businessFindUnique).toHaveBeenCalledWith({
+        where: { id: 'canon-1' },
+      });
     });
 
     it('lets an admin override the canonical business explicitly', async () => {
@@ -103,7 +105,11 @@ describe('BusinessConsolidationService', () => {
         id: 'other-canon',
         business_status: BusinessStatus.UNCLAIMED,
       };
-      const result = await service.consolidate('dup-1', 'other-canon', 'admin-1');
+      const result = await service.consolidate(
+        'dup-1',
+        'other-canon',
+        'admin-1',
+      );
       expect(result.canonical_business_id).toBe('other-canon');
       delete businessesById['other-canon'];
     });
@@ -139,7 +145,10 @@ describe('BusinessConsolidationService', () => {
     });
 
     it('throws BadRequest when the duplicate has already been consolidated', async () => {
-      businessesById['dup-1'] = { ...duplicateBiz, business_status: BusinessStatus.REMOVED };
+      businessesById['dup-1'] = {
+        ...duplicateBiz,
+        business_status: BusinessStatus.REMOVED,
+      };
       await expect(
         service.consolidate('dup-1', 'canon-1', 'admin-1'),
       ).rejects.toThrow(BadRequestException);
@@ -147,7 +156,10 @@ describe('BusinessConsolidationService', () => {
     });
 
     it('throws BadRequest when the duplicate is not UNCLAIMED (already has an owner)', async () => {
-      businessesById['dup-1'] = { ...duplicateBiz, business_status: BusinessStatus.CLAIMED };
+      businessesById['dup-1'] = {
+        ...duplicateBiz,
+        business_status: BusinessStatus.CLAIMED,
+      };
       await expect(
         service.consolidate('dup-1', 'canon-1', 'admin-1'),
       ).rejects.toThrow(BadRequestException);
@@ -155,7 +167,10 @@ describe('BusinessConsolidationService', () => {
     });
 
     it('throws BadRequest when the canonical business has itself been removed', async () => {
-      businessesById['canon-1'] = { ...canonicalBiz, business_status: BusinessStatus.REMOVED };
+      businessesById['canon-1'] = {
+        ...canonicalBiz,
+        business_status: BusinessStatus.REMOVED,
+      };
       await expect(
         service.consolidate('dup-1', 'canon-1', 'admin-1'),
       ).rejects.toThrow(BadRequestException);
@@ -195,9 +210,16 @@ describe('BusinessConsolidationService', () => {
 
   describe('getDuplicateDetail', () => {
     it('flags pending claims on both sides independently', async () => {
-      businessFindUnique.mockResolvedValueOnce({ ...duplicateBiz, duplicate_of: canonicalBiz });
+      businessFindUnique.mockResolvedValueOnce({
+        ...duplicateBiz,
+        duplicate_of: canonicalBiz,
+      });
       claimRequestFindMany.mockResolvedValue([
-        { id: 'c1', business_id: 'canon-1', status: ClaimRequestStatus.PENDING_ADMIN_REVIEW },
+        {
+          id: 'c1',
+          business_id: 'canon-1',
+          status: ClaimRequestStatus.PENDING_ADMIN_REVIEW,
+        },
       ]);
 
       const result = await service.getDuplicateDetail('dup-1');

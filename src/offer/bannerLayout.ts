@@ -1,5 +1,15 @@
-import { BusinessStatus, OfferType } from '@prisma/client';
+import { BusinessStatus } from '@prisma/client';
 import { renderPairleyCopy, Locale } from './pairleyCopyTemplates';
+import { TemplateId, resolveTemplate } from './bannerTemplates';
+import {
+  computeCostSplit,
+  buildUnlockSteps,
+  buildWhyPairleyBullets,
+  buildDealUrl,
+  CostSplit,
+  UnlockStep,
+} from './costSplitBanner';
+import { BannerBranding, resolveBranding } from './bannerBranding';
 
 /**
  * Module 14 Phase 3B — everything about a Pairley banner that can be decided
@@ -55,13 +65,14 @@ export const BADGE_LABELS: Record<Exclude<BannerBadge, null>, string> = {
 
 export interface BannerInput {
   title: string;
-  offerType: OfferType | string;
+  /** Accepts a raw string: values arrive from request bodies. */
+  offerType: string;
   originalPrice?: number | null;
   offerPrice?: number | null;
   requiredPeople?: number | null;
   category?: string | null;
   businessName?: string | null;
-  businessStatus?: BusinessStatus | string | null;
+  businessStatus?: string | null;
   city?: string | null;
   mallName?: string | null;
   /** Whether the merchant has been reviewed and verified by Pairley. */
@@ -73,6 +84,16 @@ export interface BannerInput {
   heroImageUrl?: string | null;
   logoUrl?: string | null;
   locale?: Locale;
+  /** Module 14 Phase 3C — which layout to compose. Defaults to 'A'. */
+  templateId?: string | null;
+  /** Needed only to build the Template F QR code — see costSplitBanner.ts. */
+  offerId?: string | null;
+  /** A genuine aggregate from the Rating table; never a fabricated figure. */
+  businessRating?: { average: number; count: number } | null;
+  /** Merchant's requested banner branding; honoured only when claimed. */
+  brandingMode?: string | null;
+  /** Merchant's brand colour; strictly validated before use. */
+  brandColor?: string | null;
 }
 
 export interface BannerLayout {
@@ -96,7 +117,34 @@ export interface BannerLayout {
   /** Merchant logos are withheld for unclaimed businesses — see decideLogo. */
   logoUrl: string | null;
   ctaLabel: string;
+  templateId: TemplateId;
+  /** Template F only — null for every other template, and null for F too
+   *  when there's no honest split to show (see computeCostSplit). */
+  costSplit: CostSplit | null;
+  unlockSteps: UnlockStep[];
+  whyBullets: string[];
+  dealUrl: string | null;
+  /** e.g. "4.6 (128 reviews)" — omitted entirely when the business has no
+   *  real ratings yet, never shown as a fabricated placeholder. */
+  businessRatingLabel: string | null;
+  /** Resolved branding — always populated, always with validated colours. */
+  branding: BannerBranding;
 }
+
+/** A-E share the square canvas; F is landscape to hold its richer content
+ *  (cost box + steps + partner card side by side), matching the reference
+ *  design's proportions rather than force-fitting it into a square. */
+const TEMPLATE_DIMENSIONS: Record<
+  TemplateId,
+  { width: number; height: number }
+> = {
+  A: { width: 1080, height: 1080 },
+  B: { width: 1080, height: 1080 },
+  C: { width: 1080, height: 1080 },
+  D: { width: 1080, height: 1080 },
+  E: { width: 1080, height: 1080 },
+  F: { width: 1200, height: 900 },
+};
 
 /**
  * Widest plausible advance per character, as a fraction of font size.
@@ -127,7 +175,9 @@ export function wrapLines(
   charsPerLine: number,
   maxLines: number,
 ): string[] {
-  const clean = String(text ?? '').replace(/\s+/g, ' ').trim();
+  const clean = String(text ?? '')
+    .replace(/\s+/g, ' ')
+    .trim();
   if (!clean) return [];
 
   const words = clean.split(' ');
@@ -186,7 +236,9 @@ export function escapeXml(value: string): string {
 
 /** Collapses whitespace and truncates on a word boundary where possible. */
 export function truncate(value: string, max: number): string {
-  const clean = String(value ?? '').replace(/\s+/g, ' ').trim();
+  const clean = String(value ?? '')
+    .replace(/\s+/g, ' ')
+    .trim();
   if (clean.length <= max) return clean;
 
   const cut = clean.slice(0, max - 1);
@@ -251,13 +303,13 @@ export function decideLogo(input: BannerInput): string | null {
 }
 
 export function buildLocation(input: BannerInput): string {
-  const parts = [input.mallName, input.city].filter(
-    (part): part is string => Boolean(part && String(part).trim()),
+  const parts = [input.mallName, input.city].filter((part): part is string =>
+    Boolean(part && String(part).trim()),
   );
   return truncate(parts.join(', '), MAX_LOCATION_CHARS);
 }
 
-export function offerTypeLabel(offerType: OfferType | string): string {
+export function offerTypeLabel(offerType: string): string {
   return String(offerType || 'STANDARD')
     .split('_')
     .map((word) => word.charAt(0) + word.slice(1).toLowerCase())
@@ -274,7 +326,10 @@ export function buildBannerLayout(input: BannerInput): BannerLayout {
     locale: input.locale,
   });
 
-  const discount = computeDiscountPercent(input.originalPrice, input.offerPrice);
+  const discount = computeDiscountPercent(
+    input.originalPrice,
+    input.offerPrice,
+  );
   const original = Number(input.originalPrice);
   const offer = Number(input.offerPrice) || 0;
   const hasRealOriginal =
@@ -283,10 +338,46 @@ export function buildBannerLayout(input: BannerInput): BannerLayout {
 
   const badge = decideBadge(input);
   const requiredPeople = Number(input.requiredPeople) || 0;
+  const templateId = resolveTemplate(input.templateId).id;
+
+  const branding = resolveBranding({
+    requestedMode: input.brandingMode,
+    businessStatus: input.businessStatus,
+    brandColor: input.brandColor,
+    // decideLogo already applies the unclaimed-business rule to the URL
+    // itself, so this is consistent by construction rather than by two
+    // separate checks that could drift apart.
+    hasLogo: Boolean(decideLogo(input)),
+  });
+
+  // Merchant branding trades Pairley's trust bullets for hero emphasis: the
+  // taller photo and the full bullet list cannot both fit above the CTA bar
+  // (verified by rendering — the overflow was real), and under Mode B the
+  // merchant's own identity is what's meant to lead. Pairley branding keeps
+  // the full list.
+  const allBullets = buildWhyPairleyBullets(
+    input.businessStatus,
+    input.merchantVerified,
+  );
+  const whyBullets =
+    branding.mode === 'MERCHANT' ? allBullets.slice(0, 2) : allBullets;
+  const dimensions = TEMPLATE_DIMENSIONS[templateId];
+
+  const rating = input.businessRating;
+  const businessRatingLabel =
+    rating && rating.count > 0
+      ? escapeXml(
+          `${rating.average.toFixed(1)} (${
+            rating.count >= 1000
+              ? `${(rating.count / 1000).toFixed(1)}K+`
+              : rating.count
+          } review${rating.count === 1 ? '' : 's'})`,
+        )
+      : null;
 
   return {
-    width: BANNER_WIDTH,
-    height: BANNER_HEIGHT,
+    width: dimensions.width,
+    height: dimensions.height,
     title: escapeXml(truncate(input.title || 'Special Offer', MAX_TITLE_CHARS)),
     businessName: escapeXml(
       truncate(input.businessName || 'Local Business', MAX_BUSINESS_CHARS),
@@ -298,7 +389,9 @@ export function buildBannerLayout(input: BannerInput): BannerLayout {
     offerTypeLabel: escapeXml(offerTypeLabel(input.offerType)),
     groupLabel:
       requiredPeople > 1 ? escapeXml(`${requiredPeople} people needed`) : null,
-    originalPriceLabel: hasRealOriginal ? escapeXml(formatPrice(original)) : null,
+    originalPriceLabel: hasRealOriginal
+      ? escapeXml(formatPrice(original))
+      : null,
     offerPriceLabel: escapeXml(formatPrice(offer)),
     savingsLabel: savings ? escapeXml(`Save ${formatPrice(savings)}`) : null,
     discountLabel: discount ? escapeXml(`${discount}% OFF`) : null,
@@ -307,5 +400,16 @@ export function buildBannerLayout(input: BannerInput): BannerLayout {
     heroImageUrl: input.heroImageUrl || null,
     logoUrl: decideLogo(input),
     ctaLabel: 'Show Interest',
+    templateId,
+    costSplit: computeCostSplit(
+      input.originalPrice,
+      input.offerPrice,
+      input.requiredPeople,
+    ),
+    unlockSteps: buildUnlockSteps(input.requiredPeople),
+    whyBullets,
+    dealUrl: buildDealUrl(input.offerId),
+    businessRatingLabel,
+    branding,
   };
 }

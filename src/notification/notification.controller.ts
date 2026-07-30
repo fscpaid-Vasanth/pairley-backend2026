@@ -1,4 +1,13 @@
-import { Controller, Get, Post, Put, Delete, Body, Query, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Put,
+  Delete,
+  Body,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { NotificationModuleService } from './notification.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -23,7 +32,9 @@ class RegisterPushTokenDto {
 @Controller('notifications')
 @UseGuards(JwtAuthGuard)
 export class NotificationController {
-  constructor(private readonly notificationModuleService: NotificationModuleService) {}
+  constructor(
+    private readonly notificationModuleService: NotificationModuleService,
+  ) {}
 
   @Get()
   async getNotifications(@CurrentUser() user: any) {
@@ -31,7 +42,10 @@ export class NotificationController {
   }
 
   @Put('read')
-  async markAsRead(@CurrentUser() user: any, @Body() body: ReadNotificationDto) {
+  async markAsRead(
+    @CurrentUser() user: any,
+    @Body() body: ReadNotificationDto,
+  ) {
     return this.notificationModuleService.markAsRead(user.sub, body.id);
   }
 
@@ -41,7 +55,14 @@ export class NotificationController {
   }
 
   @Post('register-token')
-  async registerPushToken(@CurrentUser() user: any, @Body() body: RegisterPushTokenDto) {
-    return this.notificationModuleService.registerPushToken(user.sub, body.token, body.platform);
+  async registerPushToken(
+    @CurrentUser() user: any,
+    @Body() body: RegisterPushTokenDto,
+  ) {
+    return this.notificationModuleService.registerPushToken(
+      user.sub,
+      body.token,
+      body.platform,
+    );
   }
 }

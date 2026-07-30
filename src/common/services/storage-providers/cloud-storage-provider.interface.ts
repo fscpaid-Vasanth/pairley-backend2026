@@ -10,7 +10,12 @@
 // time, by the STORAGE_PROVIDER env var (see common.module.ts).
 export interface CloudStorageProvider {
   /** Uploads `buffer` at `folder/fileName`, returns the resulting URL. */
-  put(buffer: Buffer, folder: string, fileName: string, contentType: string): Promise<string>;
+  put(
+    buffer: Buffer,
+    folder: string,
+    fileName: string,
+    contentType: string,
+  ): Promise<string>;
 
   /** Fetches an object by its storage key (folder/fileName, or a full URL — implementations resolve either). */
   get(key: string): Promise<{ buffer: Buffer; contentType: string }>;

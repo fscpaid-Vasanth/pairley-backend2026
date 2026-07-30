@@ -12,7 +12,12 @@ import { PrismaService } from '../prisma/prisma.service';
 import { OtpService } from '../common/services/otp.service';
 import { StorageService } from '../common/services/storage.service';
 import { NotificationService } from '../common/services/notification.service';
-import { VerificationStatus, SubscriptionStatus, BusinessStatus, Source } from '@prisma/client';
+import {
+  VerificationStatus,
+  SubscriptionStatus,
+  BusinessStatus,
+  Source,
+} from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 @Injectable()
@@ -44,7 +49,10 @@ export class AuthService implements OnModuleInit {
   // oversight; see MERCHANT_OTP_PILOT.md.
   private isMerchantOtpTestMode(role?: string): boolean {
     if (role !== 'Business') return false;
-    return this.configService.get<string>('MERCHANT_OTP_MODE', 'production') === 'test';
+    return (
+      this.configService.get<string>('MERCHANT_OTP_MODE', 'production') ===
+      'test'
+    );
   }
 
   // A merchant awaiting approval may now authenticate and reach their
@@ -119,7 +127,9 @@ export class AuthService implements OnModuleInit {
 
     const otpResult = await this.otpService.sendOtp(mobile, code);
     if (!otpResult.success) {
-      throw new BadRequestException(otpResult.error || 'Failed to send OTP. Please try again.');
+      throw new BadRequestException(
+        otpResult.error || 'Failed to send OTP. Please try again.',
+      );
     }
 
     return { success: true, message: 'OTP sent successfully' };
@@ -296,15 +306,18 @@ export class AuthService implements OnModuleInit {
       });
 
       // Notify all admins of new merchant onboarding registration
-      this.prisma.admin.findMany({ select: { id: true } })
-        .then(admins => {
-          admins.forEach(admin => {
-            this.notificationService.sendNotification(
-              admin.id,
-              'New Merchant Registered',
-              `Merchant "${business.business_name}" has registered and is awaiting onboarding approval.`,
-              'MERCHANT_ONBOARDING'
-            ).catch(() => {});
+      this.prisma.admin
+        .findMany({ select: { id: true } })
+        .then((admins) => {
+          admins.forEach((admin) => {
+            this.notificationService
+              .sendNotification(
+                admin.id,
+                'New Merchant Registered',
+                `Merchant "${business.business_name}" has registered and is awaiting onboarding approval.`,
+                'MERCHANT_ONBOARDING',
+              )
+              .catch(() => {});
           });
         })
         .catch(() => {});
@@ -327,7 +340,9 @@ export class AuthService implements OnModuleInit {
     // 1. First, check if the email exists in Customer table (regardless of the requested role)
     let customer: any = null;
     if (searchEmail) {
-      customer = await this.prisma.customer.findUnique({ where: { email: searchEmail } });
+      customer = await this.prisma.customer.findUnique({
+        where: { email: searchEmail },
+      });
     }
     if (!customer && mobile) {
       customer = await this.prisma.customer.findUnique({ where: { mobile } });
@@ -351,7 +366,9 @@ export class AuthService implements OnModuleInit {
     let business: any = null;
     if (searchEmail) {
       try {
-        business = await this.prisma.business.findUnique({ where: { email: searchEmail } });
+        business = await this.prisma.business.findUnique({
+          where: { email: searchEmail },
+        });
       } catch (_) {}
     }
     if (!business && mobile) {
@@ -379,7 +396,11 @@ export class AuthService implements OnModuleInit {
     if (role === 'Customer') {
       // New customer registration — check if mobile and city are provided
       if (!mobile || !extra.city || !extra.state || !extra.pincode) {
-        return { exists: false, message: 'Profile details (mobile, city, state, and pincode) are required to complete signup.' };
+        return {
+          exists: false,
+          message:
+            'Profile details (mobile, city, state, and pincode) are required to complete signup.',
+        };
       }
 
       customer = await this.prisma.customer.create({
@@ -404,8 +425,19 @@ export class AuthService implements OnModuleInit {
       return { token, user: customer, role: 'Customer', exists: true };
     } else if (role === 'Business') {
       // New business registration — check if mobile, city, business name and type are provided
-      if (!mobile || !extra.city || !extra.state || !extra.pincode || !extra.business_name || !extra.business_type) {
-        return { exists: false, message: 'Profile details (mobile, city, state, pincode, business name, and business type) are required to complete signup.' };
+      if (
+        !mobile ||
+        !extra.city ||
+        !extra.state ||
+        !extra.pincode ||
+        !extra.business_name ||
+        !extra.business_type
+      ) {
+        return {
+          exists: false,
+          message:
+            'Profile details (mobile, city, state, pincode, business name, and business type) are required to complete signup.',
+        };
       }
 
       let shopPhotoUrl: string | null = null;
@@ -451,8 +483,14 @@ export class AuthService implements OnModuleInit {
           pan_photo: panPhotoUrl,
           verification_status: VerificationStatus.PENDING,
           aadhaar_number: extra.aadhaar_number || null,
-          gst_number: (extra.gst_number && extra.gst_number.trim()) ? extra.gst_number : null,
-          pan_number: (extra.pan_number && extra.pan_number.trim()) ? extra.pan_number : null,
+          gst_number:
+            extra.gst_number && extra.gst_number.trim()
+              ? extra.gst_number
+              : null,
+          pan_number:
+            extra.pan_number && extra.pan_number.trim()
+              ? extra.pan_number
+              : null,
           mall_name: extra.mall_name || null,
           // Google sign-in proves real ownership immediately, same as
           // password/OTP registration — never UNCLAIMED.
@@ -484,15 +522,18 @@ export class AuthService implements OnModuleInit {
       });
 
       // Notify all admins of new merchant onboarding registration
-      this.prisma.admin.findMany({ select: { id: true } })
-        .then(admins => {
-          admins.forEach(admin => {
-            this.notificationService.sendNotification(
-              admin.id,
-              'New Merchant Registered',
-              `Merchant "${business.business_name}" has registered and is awaiting onboarding approval.`,
-              'MERCHANT_ONBOARDING'
-            ).catch(() => {});
+      this.prisma.admin
+        .findMany({ select: { id: true } })
+        .then((admins) => {
+          admins.forEach((admin) => {
+            this.notificationService
+              .sendNotification(
+                admin.id,
+                'New Merchant Registered',
+                `Merchant "${business.business_name}" has registered and is awaiting onboarding approval.`,
+                'MERCHANT_ONBOARDING',
+              )
+              .catch(() => {});
           });
         })
         .catch(() => {});

@@ -141,7 +141,9 @@ export class BusinessController {
         // a Firebase download URL (folder separators are %2F-encoded).
         let filename = url;
         try {
-          filename = decodeURIComponent(new URL(url, 'http://placeholder').pathname);
+          filename = decodeURIComponent(
+            new URL(url, 'http://placeholder').pathname,
+          );
         } catch {
           /* url wasn't a full URL (bare key or /uploads/ path) — use as-is */
         }

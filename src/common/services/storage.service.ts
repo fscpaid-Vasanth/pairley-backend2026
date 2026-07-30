@@ -148,7 +148,9 @@ export class StorageService {
   // admin needs to be able to preview either kind at any time. `getFile()`
   // above stays exactly as it was — single-provider, used by every other
   // caller — this is additive, not a replacement.
-  async getFileByUrl(url: string): Promise<{ buffer: Buffer; contentType: string }> {
+  async getFileByUrl(
+    url: string,
+  ): Promise<{ buffer: Buffer; contentType: string }> {
     // Same path-traversal guard the controller used to apply itself before
     // this method existed — moved here since callers no longer see the
     // raw extracted key to sanitize on their own. Applied to the bare-key
@@ -169,7 +171,9 @@ export class StorageService {
       path.posix.normalize(key).replace(/^(\.\.\/)+/, '');
 
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      const key = url.startsWith('/uploads/') ? url.replace(/^\/uploads\//, '') : url;
+      const key = url.startsWith('/uploads/')
+        ? url.replace(/^\/uploads\//, '')
+        : url;
       return this.getFile(sanitize(key));
     }
 

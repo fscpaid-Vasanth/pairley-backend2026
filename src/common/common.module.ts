@@ -37,12 +37,14 @@ const cloudStorageProviderFactory = {
 // unconditionally costs nothing when only one is ever actually read from.
 const s3StorageProviderFactory = {
   provide: S3StorageProvider,
-  useFactory: (configService: ConfigService) => new S3StorageProvider(configService),
+  useFactory: (configService: ConfigService) =>
+    new S3StorageProvider(configService),
   inject: [ConfigService],
 };
 const firebaseStorageProviderFactory = {
   provide: FirebaseStorageProvider,
-  useFactory: (configService: ConfigService) => new FirebaseStorageProvider(configService),
+  useFactory: (configService: ConfigService) =>
+    new FirebaseStorageProvider(configService),
   inject: [ConfigService],
 };
 

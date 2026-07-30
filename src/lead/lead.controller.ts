@@ -8,7 +8,13 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { IsIn, IsString, IsNotEmpty, IsOptional, IsObject } from 'class-validator';
+import {
+  IsIn,
+  IsString,
+  IsNotEmpty,
+  IsOptional,
+  IsObject,
+} from 'class-validator';
 import { LeadService } from './lead.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -109,6 +115,12 @@ export class LeadController {
     @Param('id') id: string,
     @Body() body: SendLeadMessageDto,
   ) {
-    return this.leadService.sendMessage(id, user.sub, user.role, body.templateKey, body.payload);
+    return this.leadService.sendMessage(
+      id,
+      user.sub,
+      user.role,
+      body.templateKey,
+      body.payload,
+    );
   }
 }

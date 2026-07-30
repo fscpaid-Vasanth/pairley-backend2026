@@ -1,4 +1,12 @@
-import { Controller, Post, Get, Put, Body, UseGuards, Param } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Get,
+  Put,
+  Body,
+  UseGuards,
+  Param,
+} from '@nestjs/common';
 import { SupportService } from './support.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -113,6 +121,12 @@ export class SupportController {
   @Put('reply')
   @UseGuards(JwtAuthGuard)
   async updateTicket(@CurrentUser() user: any, @Body() body: ReplyTicketDto) {
-    return this.supportService.updateTicketStatus(user.sub, user.role, body.ticketId, body.status, body.replyMessage);
+    return this.supportService.updateTicketStatus(
+      user.sub,
+      user.role,
+      body.ticketId,
+      body.status,
+      body.replyMessage,
+    );
   }
 }

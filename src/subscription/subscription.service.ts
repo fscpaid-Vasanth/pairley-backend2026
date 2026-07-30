@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { PaymentService } from '../common/services/payment.service';
 import { SubscriptionStatus } from '@prisma/client';
@@ -6,21 +10,37 @@ import { SubscriptionStatus } from '@prisma/client';
 @Injectable()
 export class SubscriptionService {
   private readonly plans = [
-    { name: 'Basic', amount: 199, durationDays: 30, description: 'Basic tier for single shops' },
-    { name: 'Premium', amount: 999, durationDays: 30, description: 'Premium tier for multi-shop support & priority visibility' },
+    {
+      name: 'Basic',
+      amount: 199,
+      durationDays: 30,
+      description: 'Basic tier for single shops',
+    },
+    {
+      name: 'Premium',
+      amount: 999,
+      durationDays: 30,
+      description: 'Premium tier for multi-shop support & priority visibility',
+    },
   ];
 
   constructor(
     private prisma: PrismaService,
-    private paymentService: PaymentService
+    private paymentService: PaymentService,
   ) {}
 
   async getPlans() {
     return this.plans;
   }
 
-  async subscribe(businessId: string, planName: string, paymentReference: string) {
-    const plan = this.plans.find((p) => p.name.toLowerCase() === planName.toLowerCase());
+  async subscribe(
+    businessId: string,
+    planName: string,
+    paymentReference: string,
+  ) {
+    const plan = this.plans.find(
+      (p) => p.name.toLowerCase() === planName.toLowerCase(),
+    );
     if (!plan) {
       throw new BadRequestException('Invalid subscription plan name');
     }
@@ -29,7 +49,7 @@ export class SubscriptionService {
     const paymentVerified = await this.paymentService.verifySignature(
       paymentReference,
       'mock_order_id',
-      'mock_signature'
+      'mock_signature',
     );
 
     if (!paymentVerified) {
@@ -73,10 +93,14 @@ export class SubscriptionService {
     });
 
     if (!currentSub) {
-      throw new BadRequestException('No subscription found to renew. Please purchase a new subscription first.');
+      throw new BadRequestException(
+        'No subscription found to renew. Please purchase a new subscription first.',
+      );
     }
 
-    const plan = this.plans.find((p) => p.name.toLowerCase() === currentSub.plan_name.toLowerCase());
+    const plan = this.plans.find(
+      (p) => p.name.toLowerCase() === currentSub.plan_name.toLowerCase(),
+    );
     if (!plan) {
       throw new BadRequestException('Unknown plan on current subscription');
     }
@@ -85,7 +109,7 @@ export class SubscriptionService {
     const paymentVerified = await this.paymentService.verifySignature(
       paymentReference,
       'mock_order_id',
-      'mock_signature'
+      'mock_signature',
     );
 
     if (!paymentVerified) {
@@ -93,8 +117,12 @@ export class SubscriptionService {
     }
 
     // 3. Calculate new dates
-    const isCurrentlyActive = currentSub.status === SubscriptionStatus.ACTIVE && new Date() < currentSub.expiry_date;
-    const startDate = isCurrentlyActive ? new Date(currentSub.expiry_date) : new Date();
+    const isCurrentlyActive =
+      currentSub.status === SubscriptionStatus.ACTIVE &&
+      new Date() < currentSub.expiry_date;
+    const startDate = isCurrentlyActive
+      ? new Date(currentSub.expiry_date)
+      : new Date();
     const expiryDate = new Date(startDate);
     expiryDate.setDate(startDate.getDate() + plan.durationDays);
 
@@ -139,7 +167,8 @@ export class SubscriptionService {
       return { status: 'None', plan_name: null, expiry_date: null };
     }
 
-    const isActive = sub.status === SubscriptionStatus.ACTIVE && new Date() < sub.expiry_date;
+    const isActive =
+      sub.status === SubscriptionStatus.ACTIVE && new Date() < sub.expiry_date;
     return {
       ...sub,
       isActive,

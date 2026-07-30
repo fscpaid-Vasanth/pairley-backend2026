@@ -613,7 +613,10 @@ export class OfferService {
     // be reachable in practice since consolidation reassigns every Offer
     // off the REMOVED business, but a stale/direct link should still 404
     // for non-admins rather than reveal a removed business's offer.
-    if (offer.business?.business_status === BusinessStatus.REMOVED && !isAdmin) {
+    if (
+      offer.business?.business_status === BusinessStatus.REMOVED &&
+      !isAdmin
+    ) {
       throw new NotFoundException('Offer not found');
     }
 
@@ -656,7 +659,11 @@ export class OfferService {
     // published information, so Pairley points at the merchant's own site
     // rather than positioning itself as the gatekeeper to them.
     const contactAccess = resolveContactAccess(
-      { userId: requestingUserId, role: requestingRole, ownerBusinessId: offer.business_id },
+      {
+        userId: requestingUserId,
+        role: requestingRole,
+        ownerBusinessId: offer.business_id,
+      },
       offer.business,
     );
 

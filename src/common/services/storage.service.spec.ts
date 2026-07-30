@@ -25,12 +25,19 @@ describe('StorageService', () => {
 
   const makeConfig = (values: Record<string, any>) =>
     ({
-      get: jest.fn((key: string, def?: any) => (key in values ? values[key] : def)),
+      get: jest.fn((key: string, def?: any) =>
+        key in values ? values[key] : def,
+      ),
     }) as unknown as ConfigService;
 
   const makeProvider = (): jest.Mocked<CloudStorageProvider> => ({
-    put: jest.fn().mockResolvedValue('https://provider.example.com/folder/file.png'),
-    get: jest.fn().mockResolvedValue({ buffer: Buffer.from('data'), contentType: 'image/png' }),
+    put: jest
+      .fn()
+      .mockResolvedValue('https://provider.example.com/folder/file.png'),
+    get: jest.fn().mockResolvedValue({
+      buffer: Buffer.from('data'),
+      contentType: 'image/png',
+    }),
     health: jest.fn().mockResolvedValue({ ok: true }),
   });
 
@@ -114,7 +121,8 @@ describe('StorageService', () => {
 
       expect(url).toBe('https://provider.example.com/folder/file.png');
       expect(provider.put).toHaveBeenCalledTimes(1);
-      const [buffer, folder, fileName, contentType] = provider.put.mock.calls[0];
+      const [buffer, folder, fileName, contentType] =
+        provider.put.mock.calls[0];
       expect(buffer).toEqual(file.buffer);
       expect(folder).toBe('businesses/shops');
       expect(fileName).toMatch(/^\d+-photo\.jpg$/);
@@ -123,7 +131,11 @@ describe('StorageService', () => {
 
     it('uploadBase64 decodes the data URI then delegates through uploadFile to provider.put', async () => {
       const dataUri = `data:image/png;base64,${Buffer.from('pixel').toString('base64')}`;
-      const url = await service.uploadBase64(dataUri, 'claim-evidence', 'evidence-1.png');
+      const url = await service.uploadBase64(
+        dataUri,
+        'claim-evidence',
+        'evidence-1.png',
+      );
 
       expect(url).toBe('https://provider.example.com/folder/file.png');
       expect(provider.put).toHaveBeenCalledTimes(1);
@@ -134,15 +146,24 @@ describe('StorageService', () => {
 
     it('uploadBase64 returns the input unchanged when it is not a data URI (already a URL)', async () => {
       const existingUrl = 'https://provider.example.com/already/uploaded.png';
-      const result = await service.uploadBase64(existingUrl, 'folder', 'name.png');
+      const result = await service.uploadBase64(
+        existingUrl,
+        'folder',
+        'name.png',
+      );
       expect(result).toBe(existingUrl);
       expect(provider.put).not.toHaveBeenCalled();
     });
 
     it('getFile delegates to provider.get with the given key', async () => {
       const result = await service.getFile('businesses/shops/123-shop.png');
-      expect(provider.get).toHaveBeenCalledWith('businesses/shops/123-shop.png');
-      expect(result).toEqual({ buffer: Buffer.from('data'), contentType: 'image/png' });
+      expect(provider.get).toHaveBeenCalledWith(
+        'businesses/shops/123-shop.png',
+      );
+      expect(result).toEqual({
+        buffer: Buffer.from('data'),
+        contentType: 'image/png',
+      });
     });
 
     it('checkHealth merges provider.health() with the configured mode', async () => {
@@ -163,14 +184,24 @@ describe('StorageService', () => {
     });
 
     it('checkHealth surfaces a provider failure without throwing', async () => {
-      provider.health.mockResolvedValue({ ok: false, error: 'bucket unreachable' });
+      provider.health.mockResolvedValue({
+        ok: false,
+        error: 'bucket unreachable',
+      });
       const result = await service.checkHealth();
-      expect(result).toEqual({ ok: false, error: 'bucket unreachable', mode: 's3' });
+      expect(result).toEqual({
+        ok: false,
+        error: 'bucket unreachable',
+        mode: 's3',
+      });
     });
 
     describe('getFileByUrl — the document-preview proxy read path', () => {
       it('routes an S3 URL to s3Provider.get with the extracted key, regardless of the active STORAGE_PROVIDER', async () => {
-        s3Provider.get.mockResolvedValue({ buffer: Buffer.from('s3-bytes'), contentType: 'image/jpeg' });
+        s3Provider.get.mockResolvedValue({
+          buffer: Buffer.from('s3-bytes'),
+          contentType: 'image/jpeg',
+        });
 
         // Active provider is STORAGE_PROVIDER=firebase here — proves
         // routing is by URL shape, not by whichever provider is "active."
@@ -185,13 +216,21 @@ describe('StorageService', () => {
           'https://pairley-storage.s3.ap-south-1.amazonaws.com/businesses/documents/123-aadhaar.jpg',
         );
 
-        expect(s3Provider.get).toHaveBeenCalledWith('businesses/documents/123-aadhaar.jpg');
+        expect(s3Provider.get).toHaveBeenCalledWith(
+          'businesses/documents/123-aadhaar.jpg',
+        );
         expect(firebaseProvider.get).not.toHaveBeenCalled();
-        expect(result).toEqual({ buffer: Buffer.from('s3-bytes'), contentType: 'image/jpeg' });
+        expect(result).toEqual({
+          buffer: Buffer.from('s3-bytes'),
+          contentType: 'image/jpeg',
+        });
       });
 
       it('routes a Firebase download URL to firebaseProvider.get with the full URL, regardless of the active STORAGE_PROVIDER', async () => {
-        firebaseProvider.get.mockResolvedValue({ buffer: Buffer.from('fb-bytes'), contentType: 'application/pdf' });
+        firebaseProvider.get.mockResolvedValue({
+          buffer: Buffer.from('fb-bytes'),
+          contentType: 'application/pdf',
+        });
         const firebaseUrl =
           'https://firebasestorage.googleapis.com/v0/b/pairley2026-4706e.firebasestorage.app/o/claim-evidence%2F1-evidence.pdf?alt=media&token=abc';
 
@@ -202,23 +241,37 @@ describe('StorageService', () => {
 
         expect(firebaseProvider.get).toHaveBeenCalledWith(firebaseUrl);
         expect(s3Provider.get).not.toHaveBeenCalled();
-        expect(result).toEqual({ buffer: Buffer.from('fb-bytes'), contentType: 'application/pdf' });
+        expect(result).toEqual({
+          buffer: Buffer.from('fb-bytes'),
+          contentType: 'application/pdf',
+        });
       });
 
       it('also recognizes a bare *.firebasestorage.app hostname (not just firebasestorage.googleapis.com)', async () => {
-        firebaseProvider.get.mockResolvedValue({ buffer: Buffer.from('x'), contentType: 'image/png' });
-        await service.getFileByUrl('https://pairley2026-4706e.firebasestorage.app/some/key.png');
+        firebaseProvider.get.mockResolvedValue({
+          buffer: Buffer.from('x'),
+          contentType: 'image/png',
+        });
+        await service.getFileByUrl(
+          'https://pairley2026-4706e.firebasestorage.app/some/key.png',
+        );
         expect(firebaseProvider.get).toHaveBeenCalledTimes(1);
       });
 
       it('falls back to the active provider via getFile() for a bare key (no scheme)', async () => {
         await service.getFileByUrl('businesses/documents/legacy-key.jpg');
-        expect(provider.get).toHaveBeenCalledWith('businesses/documents/legacy-key.jpg');
+        expect(provider.get).toHaveBeenCalledWith(
+          'businesses/documents/legacy-key.jpg',
+        );
       });
 
-      it('strips the /uploads/ prefix before delegating, matching getFile()\'s own contract', async () => {
-        await service.getFileByUrl('/uploads/businesses/shops/local-dev-file.png');
-        expect(provider.get).toHaveBeenCalledWith('businesses/shops/local-dev-file.png');
+      it("strips the /uploads/ prefix before delegating, matching getFile()'s own contract", async () => {
+        await service.getFileByUrl(
+          '/uploads/businesses/shops/local-dev-file.png',
+        );
+        expect(provider.get).toHaveBeenCalledWith(
+          'businesses/shops/local-dev-file.png',
+        );
       });
 
       it('sanitizes a path-traversal attempt in the bare-key branch', async () => {
@@ -228,8 +281,13 @@ describe('StorageService', () => {
       });
 
       it('sanitizes a path-traversal attempt embedded in an S3 URL', async () => {
-        s3Provider.get.mockResolvedValue({ buffer: Buffer.from('x'), contentType: 'image/png' });
-        await service.getFileByUrl('https://pairley-storage.s3.ap-south-1.amazonaws.com/../../etc/passwd');
+        s3Provider.get.mockResolvedValue({
+          buffer: Buffer.from('x'),
+          contentType: 'image/png',
+        });
+        await service.getFileByUrl(
+          'https://pairley-storage.s3.ap-south-1.amazonaws.com/../../etc/passwd',
+        );
         const calledWith = s3Provider.get.mock.calls[0][0];
         expect(calledWith).not.toContain('..');
       });

@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { SupportStatus } from '@prisma/client';
 import * as nodemailer from 'nodemailer';
@@ -26,7 +30,14 @@ export interface SendChatMessageDto {
 export class SupportService {
   constructor(private prisma: PrismaService) {}
 
-  private async sendTicketEmail(data: { name: string; email: string; orderId?: string; category: string; description: string; ref: string }) {
+  private async sendTicketEmail(data: {
+    name: string;
+    email: string;
+    orderId?: string;
+    category: string;
+    description: string;
+    ref: string;
+  }) {
     const host = process.env.SMTP_HOST || '';
     const port = parseInt(process.env.SMTP_PORT || '587');
     const user = process.env.SMTP_USER || '';
@@ -63,16 +74,23 @@ This is an automated copy of the ticket sent to support@pairley.com.
           subject,
           text,
         });
-        console.log(`Support ticket email sent successfully to support@pairley.com for ref: ${data.ref}`);
+        console.log(
+          `Support ticket email sent successfully to support@pairley.com for ref: ${data.ref}`,
+        );
       } catch (err) {
         console.error(`Failed to send support email via SMTP:`, err);
       }
     } else {
-      console.log(`[MOCK EMAIL DISPATCH] To: support@pairley.com\nSubject: ${subject}\nBody:\n${text}`);
+      console.log(
+        `[MOCK EMAIL DISPATCH] To: support@pairley.com\nSubject: ${subject}\nBody:\n${text}`,
+      );
     }
   }
 
-  async createTicket(userId: string, data: { subject: string; description: string }) {
+  async createTicket(
+    userId: string,
+    data: { subject: string; description: string },
+  ) {
     return this.prisma.supportTicket.create({
       data: {
         user_id: userId,
@@ -102,7 +120,7 @@ This is an automated copy of the ticket sent to support@pairley.com.
       orderId: data.orderId,
       category: data.category,
       description: data.description,
-      ref: tktRef
+      ref: tktRef,
     });
 
     return { success: true, ticketId: ticket.id, ref: tktRef };
@@ -110,7 +128,10 @@ This is an automated copy of the ticket sent to support@pairley.com.
 
   async createChatSession(data: CreateChatSessionDto) {
     const tktRef = `CHAT-${Math.random().toString(16).substring(2, 6).toUpperCase()}`;
-    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const timeStr = new Date().toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
     const serializedDescription = `[Sender] ${data.name} (${data.email})\n[Topic] Live Chat Support\n[Order] None\n[Messages]\nBot [${timeStr}]: Hello! I am Pairley Bot. 🤖 How can I assist you with your co-buying matches today?`;
 
     const ticket = await this.prisma.supportTicket.create({
@@ -127,28 +148,31 @@ This is an automated copy of the ticket sent to support@pairley.com.
 
   async sendChatMessage(data: SendChatMessageDto) {
     const ticket = await this.prisma.supportTicket.findUnique({
-      where: { id: data.ticketId }
+      where: { id: data.ticketId },
     });
 
     if (!ticket) {
       throw new NotFoundException('Support session not found');
     }
 
-    const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const timeStr = new Date().toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
     const senderLabel = data.sender === 'user' ? 'User' : 'Support';
     const updatedDescription = `${ticket.description}\n${senderLabel} [${timeStr}]: ${data.text}`;
 
     return this.prisma.supportTicket.update({
       where: { id: data.ticketId },
       data: {
-        description: updatedDescription
-      }
+        description: updatedDescription,
+      },
     });
   }
 
   async getTicketById(id: string) {
     const ticket = await this.prisma.supportTicket.findUnique({
-      where: { id }
+      where: { id },
     });
     if (!ticket) {
       throw new NotFoundException('Ticket not found');
@@ -169,7 +193,13 @@ This is an automated copy of the ticket sent to support@pairley.com.
     });
   }
 
-  async updateTicketStatus(userId: string, role: string, ticketId: string, status: string, replyMessage?: string) {
+  async updateTicketStatus(
+    userId: string,
+    role: string,
+    ticketId: string,
+    status: string,
+    replyMessage?: string,
+  ) {
     const ticket = await this.prisma.supportTicket.findUnique({
       where: { id: ticketId },
     });
@@ -179,7 +209,9 @@ This is an automated copy of the ticket sent to support@pairley.com.
     }
 
     if (role !== 'Admin' && ticket.user_id !== userId) {
-      throw new ForbiddenException('You do not have permission to modify this ticket');
+      throw new ForbiddenException(
+        'You do not have permission to modify this ticket',
+      );
     }
 
     const updatedData: any = {
@@ -187,7 +219,10 @@ This is an automated copy of the ticket sent to support@pairley.com.
     };
 
     if (replyMessage) {
-      const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const timeStr = new Date().toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+      });
       if (ticket.subject.startsWith('[CHAT]')) {
         updatedData.description = `${ticket.description}\nSupport [${timeStr}]: ${replyMessage}`;
       } else {

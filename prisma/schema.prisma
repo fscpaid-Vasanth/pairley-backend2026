@@ -118,6 +118,19 @@ enum LeadAcceptanceMode {
   AUTOMATIC
 }
 
+// Module 14 Phase 3C — whose branding a generated offer banner leads with.
+// PAIRLEY is the default and the only mode available to an UNCLAIMED
+// business: a merchant who hasn't joined Pairley hasn't asked for their
+// branding to be used, and putting their logo and colours front-and-centre
+// on a Pairley-published banner would imply an endorsement that doesn't
+// exist (the same reasoning that already withholds their logo entirely —
+// see bannerLayout.ts's decideLogo). MERCHANT is honoured only once the
+// business is CLAIMED, i.e. once a real merchant is making the choice.
+enum BannerBrandingMode {
+  PAIRLEY
+  MERCHANT
+}
+
 // Module 9 — AI Offer Discovery (Group B) foundation. Tracks one import
 // attempt end to end (currently WEBSITE only; the Source enum's other
 // values are reserved for later modules).
@@ -237,6 +250,14 @@ model Business {
   geo_lat              Float?
   geo_lng              Float?
   lead_acceptance_mode LeadAcceptanceMode @default(MANUAL)
+
+  // Module 14 Phase 3C — merchant banner branding preference. Additive and
+  // defaulted, so every existing business keeps Pairley branding until a
+  // merchant explicitly changes it. brand_color is a #RRGGBB hex string,
+  // strictly validated before it reaches an SVG fill attribute (see
+  // bannerBranding.ts) — never interpolated raw.
+  banner_branding_mode BannerBrandingMode @default(PAIRLEY)
+  brand_color          String?
   description          String?
   website              String?
   instagram            String?

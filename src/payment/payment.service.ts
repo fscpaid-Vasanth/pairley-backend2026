@@ -6,7 +6,7 @@ import { PrismaService } from '../prisma/prisma.service';
 export class PaymentModuleService {
   constructor(
     private commonPaymentService: CommonPaymentService,
-    private prisma: PrismaService
+    private prisma: PrismaService,
   ) {}
 
   async createOrder(amount: number, receipt: string) {
@@ -14,7 +14,11 @@ export class PaymentModuleService {
   }
 
   async verify(paymentId: string, orderId: string, signature: string) {
-    const success = await this.commonPaymentService.verifySignature(paymentId, orderId, signature);
+    const success = await this.commonPaymentService.verifySignature(
+      paymentId,
+      orderId,
+      signature,
+    );
     return { success };
   }
 

@@ -72,8 +72,9 @@ describe('bannerLayout (Module 14 Phase 3B)', () => {
 
     it('never exceeds the limit for any input length', () => {
       for (let n = 1; n < 60; n++) {
-        expect(truncate('a b c d e f g h i j k l m n o p'.slice(0, n), 12).length)
-          .toBeLessThanOrEqual(12);
+        expect(
+          truncate('a b c d e f g h i j k l m n o p'.slice(0, n), 12).length,
+        ).toBeLessThanOrEqual(12);
       }
     });
   });
@@ -200,13 +201,22 @@ describe('bannerLayout (Module 14 Phase 3B)', () => {
 
     it('labels a claimed business', () => {
       expect(
-        decideBadge({ ...base, source: 'MANUAL', businessStatus: BusinessStatus.CLAIMED }),
+        decideBadge({
+          ...base,
+          source: 'MANUAL',
+          businessStatus: BusinessStatus.CLAIMED,
+        }),
       ).toBe('CLAIMED');
     });
 
     it('falls back to curated for a plain merchant-created offer', () => {
-      expect(decideBadge({ ...base, source: 'MANUAL', businessStatus: BusinessStatus.UNCLAIMED }))
-        .toBe('CURATED');
+      expect(
+        decideBadge({
+          ...base,
+          source: 'MANUAL',
+          businessStatus: BusinessStatus.UNCLAIMED,
+        }),
+      ).toBe('CURATED');
     });
   });
 
@@ -215,18 +225,28 @@ describe('bannerLayout (Module 14 Phase 3B)', () => {
     // implies an endorsement that does not exist.
     it('withholds the logo for an unclaimed business', () => {
       expect(
-        decideLogo({ ...base, businessStatus: BusinessStatus.UNCLAIMED, logoUrl: 'https://x/l.png' }),
+        decideLogo({
+          ...base,
+          businessStatus: BusinessStatus.UNCLAIMED,
+          logoUrl: 'https://x/l.png',
+        }),
       ).toBeNull();
     });
 
     it('allows the logo once the business is claimed', () => {
       expect(
-        decideLogo({ ...base, businessStatus: BusinessStatus.CLAIMED, logoUrl: 'https://x/l.png' }),
+        decideLogo({
+          ...base,
+          businessStatus: BusinessStatus.CLAIMED,
+          logoUrl: 'https://x/l.png',
+        }),
       ).toBe('https://x/l.png');
     });
 
     it('returns null when a claimed business has no logo', () => {
-      expect(decideLogo({ ...base, businessStatus: BusinessStatus.CLAIMED })).toBeNull();
+      expect(
+        decideLogo({ ...base, businessStatus: BusinessStatus.CLAIMED }),
+      ).toBeNull();
     });
   });
 
@@ -290,8 +310,12 @@ describe('bannerLayout (Module 14 Phase 3B)', () => {
     });
 
     it('omits the group label for a solo offer', () => {
-      expect(buildBannerLayout({ ...base, requiredPeople: 1 }).groupLabel).toBeNull();
-      expect(buildBannerLayout({ ...base, requiredPeople: null }).groupLabel).toBeNull();
+      expect(
+        buildBannerLayout({ ...base, requiredPeople: 1 }).groupLabel,
+      ).toBeNull();
+      expect(
+        buildBannerLayout({ ...base, requiredPeople: null }).groupLabel,
+      ).toBeNull();
     });
 
     it('withholds the logo for an unclaimed business end to end', () => {
@@ -315,10 +339,105 @@ describe('bannerLayout (Module 14 Phase 3B)', () => {
         businessName: '</text><script>',
         city: '<b>Chennai</b>',
       });
-      [layout.title, layout.businessName, layout.location, layout.body, layout.headline]
-        .forEach((field) => {
-          expect(field).not.toMatch(/[<>]/);
+      [
+        layout.title,
+        layout.businessName,
+        layout.location,
+        layout.body,
+        layout.headline,
+      ].forEach((field) => {
+        expect(field).not.toMatch(/[<>]/);
+      });
+    });
+
+    // Module 14 Phase 3C follow-up — Template F content, computed inline
+    // rather than requiring a second call. The underlying math/wording
+    // logic is covered exhaustively in costSplitBanner.spec.ts; these
+    // confirm buildBannerLayout actually wires it through.
+    describe('Template F content', () => {
+      it('includes the group-savings figures when the offer genuinely saves', () => {
+        const layout = buildBannerLayout({ ...base, templateId: 'F' });
+        expect(layout.costSplit).toEqual({
+          actualPriceLabel: '₹1,200',
+          yourShareLabel: '₹600',
+          yourSavingLabel: '₹600',
+          groupSavingLabel: '₹1,200',
+          groupSavingLead: 'You Both Save',
+          groupSavingWorking: '2 × ₹600',
         });
+      });
+
+      it('omits the cost split when there is nothing honest to show, regardless of template', () => {
+        const layout = buildBannerLayout({
+          ...base,
+          templateId: 'F',
+          originalPrice: 500,
+          offerPrice: 500,
+        });
+        expect(layout.costSplit).toBeNull();
+      });
+
+      it('always provides exactly 3 unlock steps', () => {
+        expect(
+          buildBannerLayout({ ...base, templateId: 'F' }).unlockSteps,
+        ).toHaveLength(3);
+      });
+
+      it('withholds "Verified Local Partner" for an unclaimed business', () => {
+        const layout = buildBannerLayout({ ...base, templateId: 'F' });
+        expect(layout.whyBullets).not.toContain('Verified Local Partner');
+      });
+
+      it('builds a deal URL only when an offer id is given', () => {
+        expect(
+          buildBannerLayout({ ...base, templateId: 'F' }).dealUrl,
+        ).toBeNull();
+        expect(
+          buildBannerLayout({ ...base, templateId: 'F', offerId: 'offer-1' })
+            .dealUrl,
+        ).toBe('https://pairley.com/deals/offer-1');
+      });
+
+      it('never fabricates a rating — omits it with no rating data', () => {
+        expect(
+          buildBannerLayout({ ...base, templateId: 'F' }).businessRatingLabel,
+        ).toBeNull();
+      });
+
+      it('formats a genuine rating, abbreviating large review counts', () => {
+        const layout = buildBannerLayout({
+          ...base,
+          templateId: 'F',
+          businessRating: { average: 4.6, count: 1234 },
+        });
+        expect(layout.businessRatingLabel).toBe('4.6 (1.2K+ reviews)');
+      });
+
+      it('uses the singular "review" for exactly one rating', () => {
+        const layout = buildBannerLayout({
+          ...base,
+          templateId: 'F',
+          businessRating: { average: 5, count: 1 },
+        });
+        expect(layout.businessRatingLabel).toBe('5.0 (1 review)');
+      });
+    });
+
+    describe('per-template canvas size', () => {
+      it('renders A-E on the shared square canvas', () => {
+        ['A', 'B', 'C', 'D', 'E'].forEach((templateId) => {
+          const layout = buildBannerLayout({ ...base, templateId });
+          expect(layout.width).toBe(1080);
+          expect(layout.height).toBe(1080);
+        });
+      });
+
+      it('renders F on a landscape canvas, matching its richer content', () => {
+        const layout = buildBannerLayout({ ...base, templateId: 'F' });
+        expect(layout.width).toBe(1200);
+        expect(layout.height).toBe(900);
+        expect(layout.width).toBeGreaterThan(layout.height);
+      });
     });
   });
 });

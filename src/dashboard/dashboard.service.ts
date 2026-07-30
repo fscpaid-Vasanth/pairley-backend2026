@@ -1,13 +1,18 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationService } from '../common/services/notification.service';
-import { OfferStatus, InterestStatus, VerificationStatus, SubscriptionStatus } from '@prisma/client';
+import {
+  OfferStatus,
+  InterestStatus,
+  VerificationStatus,
+  SubscriptionStatus,
+} from '@prisma/client';
 
 @Injectable()
 export class DashboardService {
   constructor(
     private prisma: PrismaService,
-    private notificationService: NotificationService
+    private notificationService: NotificationService,
   ) {}
 
   // ==========================================
@@ -23,9 +28,15 @@ export class DashboardService {
       select: { status: true },
     });
 
-    const interestedCount = offerInterests.filter((i) => i.status === InterestStatus.INTERESTED).length;
-    const readyToBuyCount = offerInterests.filter((i) => i.status === InterestStatus.READY_TO_BUY).length;
-    const completedCount = offerInterests.filter((i) => i.status === InterestStatus.COMPLETED).length;
+    const interestedCount = offerInterests.filter(
+      (i) => i.status === InterestStatus.INTERESTED,
+    ).length;
+    const readyToBuyCount = offerInterests.filter(
+      (i) => i.status === InterestStatus.READY_TO_BUY,
+    ).length;
+    const completedCount = offerInterests.filter(
+      (i) => i.status === InterestStatus.COMPLETED,
+    ).length;
 
     // Subscription status
     const currentSub = await this.prisma.subscription.findFirst({
@@ -37,7 +48,9 @@ export class DashboardService {
       ? {
           plan_name: currentSub.plan_name,
           expiry_date: currentSub.expiry_date,
-          isActive: currentSub.status === SubscriptionStatus.ACTIVE && new Date() < currentSub.expiry_date,
+          isActive:
+            currentSub.status === SubscriptionStatus.ACTIVE &&
+            new Date() < currentSub.expiry_date,
         }
       : { plan_name: null, expiry_date: null, isActive: false };
 
@@ -63,7 +76,7 @@ export class DashboardService {
   async getAdminMetrics() {
     const totalCustomers = await this.prisma.customer.count();
     const totalBusinesses = await this.prisma.business.count();
-    
+
     const verifiedBusinesses = await this.prisma.business.count({
       where: { verification_status: VerificationStatus.APPROVED },
     });
@@ -114,7 +127,9 @@ export class DashboardService {
 
   // Business verification / approval
   async verifyBusiness(businessId: string, status: string) {
-    const business = await this.prisma.business.findUnique({ where: { id: businessId } });
+    const business = await this.prisma.business.findUnique({
+      where: { id: businessId },
+    });
     if (!business) {
       throw new NotFoundException('Business owner not found');
     }
@@ -126,14 +141,16 @@ export class DashboardService {
 
     // Notify business owner about onboarding status change
     const isApproved = status === 'APPROVED' || status === 'VERIFIED';
-    await this.notificationService.sendNotification(
-      businessId,
-      isApproved ? 'Store Onboarding Approved!' : 'Store Onboarding Updated',
-      isApproved
-        ? `Congratulations! Your store onboarding request for "${updated.business_name}" was APPROVED by the administrator. You can now post live BOGO and Group deals!`
-        : `Your store onboarding status has been updated to: ${status}.`,
-      'ONBOARDING_STATUS'
-    ).catch(() => {});
+    await this.notificationService
+      .sendNotification(
+        businessId,
+        isApproved ? 'Store Onboarding Approved!' : 'Store Onboarding Updated',
+        isApproved
+          ? `Congratulations! Your store onboarding request for "${updated.business_name}" was APPROVED by the administrator. You can now post live BOGO and Group deals!`
+          : `Your store onboarding status has been updated to: ${status}.`,
+        'ONBOARDING_STATUS',
+      )
+      .catch(() => {});
 
     return updated;
   }
@@ -165,7 +182,9 @@ export class DashboardService {
 
   // Offer moderation
   async moderateOffer(offerId: string, status: string) {
-    const offer = await this.prisma.offer.findUnique({ where: { id: offerId } });
+    const offer = await this.prisma.offer.findUnique({
+      where: { id: offerId },
+    });
     if (!offer) {
       throw new NotFoundException('Offer not found');
     }

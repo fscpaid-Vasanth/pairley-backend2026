@@ -22,7 +22,12 @@ const DUPLICATE_LIST_SELECT = {
   duplicate_reasons: true,
   created_at: true,
   duplicate_of: {
-    select: { id: true, business_name: true, city: true, business_status: true },
+    select: {
+      id: true,
+      business_name: true,
+      city: true,
+      business_status: true,
+    },
   },
 };
 
@@ -70,9 +75,10 @@ export class BusinessConsolidationService {
       throw new NotFoundException('Business not found');
     }
 
-    const candidateIds = [business.id, business.duplicate_of_business_id].filter(
-      (id): id is string => !!id,
-    );
+    const candidateIds = [
+      business.id,
+      business.duplicate_of_business_id,
+    ].filter((id): id is string => !!id);
     const pendingClaims = await this.prisma.claimRequest.findMany({
       where: {
         business_id: { in: candidateIds },
@@ -83,7 +89,9 @@ export class BusinessConsolidationService {
 
     return {
       ...business,
-      pending_claim_on_this: pendingClaims.some((c) => c.business_id === business.id),
+      pending_claim_on_this: pendingClaims.some(
+        (c) => c.business_id === business.id,
+      ),
       pending_claim_on_canonical: pendingClaims.some(
         (c) => c.business_id === business.duplicate_of_business_id,
       ),
@@ -150,21 +158,23 @@ export class BusinessConsolidationService {
       );
     }
 
-    const [offersReassigned, updatedDuplicate] = await this.prisma.$transaction([
-      this.prisma.offer.updateMany({
-        where: { business_id: duplicateBusinessId },
-        data: { business_id: resolvedCanonicalId },
-      }),
-      this.prisma.business.update({
-        where: { id: duplicateBusinessId },
-        data: {
-          business_status: BusinessStatus.REMOVED,
-          consolidated_into_business_id: resolvedCanonicalId,
-          consolidated_at: new Date(),
-          consolidated_by: adminId,
-        },
-      }),
-    ]);
+    const [offersReassigned, updatedDuplicate] = await this.prisma.$transaction(
+      [
+        this.prisma.offer.updateMany({
+          where: { business_id: duplicateBusinessId },
+          data: { business_id: resolvedCanonicalId },
+        }),
+        this.prisma.business.update({
+          where: { id: duplicateBusinessId },
+          data: {
+            business_status: BusinessStatus.REMOVED,
+            consolidated_into_business_id: resolvedCanonicalId,
+            consolidated_at: new Date(),
+            consolidated_by: adminId,
+          },
+        }),
+      ],
+    );
 
     this.logger.log(
       `Business ${duplicateBusinessId} consolidated into ${resolvedCanonicalId} by admin ${adminId} — ${offersReassigned.count} offer(s) reassigned`,

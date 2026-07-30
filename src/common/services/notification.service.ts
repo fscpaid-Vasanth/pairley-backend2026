@@ -12,11 +12,14 @@ export class NotificationService {
 
   constructor(
     private configService: ConfigService,
-    private prisma: PrismaService
+    private prisma: PrismaService,
   ) {
-    const mockNotifVal = this.configService.get<any>('USE_MOCK_NOTIFICATIONS', true);
+    const mockNotifVal = this.configService.get<any>(
+      'USE_MOCK_NOTIFICATIONS',
+      true,
+    );
     this.useMock = mockNotifVal === true || mockNotifVal === 'true';
-    
+
     this.projectId = this.configService.get<string>('FIREBASE_PROJECT_ID', '');
   }
 
@@ -24,7 +27,7 @@ export class NotificationService {
     userId: string,
     title: string,
     message: string,
-    notificationType: string
+    notificationType: string,
   ): Promise<boolean> {
     try {
       // 1. Create DB entry for the user
@@ -43,16 +46,30 @@ export class NotificationService {
       });
 
       // 3. Write simulated push delivery log
-      this._writeToPushLog(userId, title, message, notificationType, userTokens);
+      this._writeToPushLog(
+        userId,
+        title,
+        message,
+        notificationType,
+        userTokens,
+      );
 
       // 4. Send Push Notification via Firebase Cloud Messaging
       if (this.useMock) {
-        this.logger.log(`[MOCK FCM] Push notification sent to user ${userId}: "${title}" - ${message} (Tokens targeted: ${userTokens.length})`);
+        this.logger.log(
+          `[MOCK FCM] Push notification sent to user ${userId}: "${title}" - ${message} (Tokens targeted: ${userTokens.length})`,
+        );
         return true;
       }
 
       // 5. Real FCM v1 HTTP API push
-      await this._sendFcmPush(userId, title, message, notificationType, userTokens);
+      await this._sendFcmPush(
+        userId,
+        title,
+        message,
+        notificationType,
+        userTokens,
+      );
       return true;
     } catch (error) {
       this.logger.error(`Failed to send/store notification: ${error.message}`);
@@ -60,7 +77,13 @@ export class NotificationService {
     }
   }
 
-  private _writeToPushLog(userId: string, title: string, message: string, notificationType: string, tokens: any[]) {
+  private _writeToPushLog(
+    userId: string,
+    title: string,
+    message: string,
+    notificationType: string,
+    tokens: any[],
+  ) {
     try {
       const logDir = path.join(process.cwd(), 'scratch');
       if (!fs.existsSync(logDir)) {
@@ -80,7 +103,7 @@ export class NotificationService {
         message,
         notificationType,
         targetsCount: tokens.length,
-        targets: tokens.map(t => ({ token: t.token, platform: t.platform })),
+        targets: tokens.map((t) => ({ token: t.token, platform: t.platform })),
       });
       fs.writeFileSync(logPath, JSON.stringify(logs, null, 2));
     } catch (err) {
@@ -93,17 +116,24 @@ export class NotificationService {
     title: string,
     body: string,
     notificationType: string,
-    tokens: any[]
+    tokens: any[],
   ): Promise<void> {
     try {
       // Load Firebase service account credentials
-      const serviceAccountPath = path.join(process.cwd(), 'firebase-service-account.json');
+      const serviceAccountPath = path.join(
+        process.cwd(),
+        'firebase-service-account.json',
+      );
       if (!fs.existsSync(serviceAccountPath)) {
-        this.logger.warn('[FCM] firebase-service-account.json not found. Skipping push.');
+        this.logger.warn(
+          '[FCM] firebase-service-account.json not found. Skipping push.',
+        );
         return;
       }
 
-      const serviceAccount = JSON.parse(fs.readFileSync(serviceAccountPath, 'utf-8'));
+      const serviceAccount = JSON.parse(
+        fs.readFileSync(serviceAccountPath, 'utf-8'),
+      );
 
       // Get OAuth2 access token via Google auth
       const { GoogleAuth } = await import('google-auth-library');
@@ -145,7 +175,9 @@ export class NotificationService {
             this.logger.error(`[FCM] Push token send failed: ${err}`);
           }
         }
-        this.logger.log(`[FCM] Sent pushes to ${tokens.length} registered tokens for user ${userId}`);
+        this.logger.log(
+          `[FCM] Sent pushes to ${tokens.length} registered tokens for user ${userId}`,
+        );
       } else {
         // FCM HTTP v1 API — topic-based push (user ID as topic for simplicity)
         const payload = {
@@ -169,7 +201,9 @@ export class NotificationService {
           const err = await response.text();
           this.logger.error(`[FCM] Topic Push failed: ${err}`);
         } else {
-          this.logger.log(`[FCM] Topic Push sent to user_${userId}: "${title}"`);
+          this.logger.log(
+            `[FCM] Topic Push sent to user_${userId}: "${title}"`,
+          );
         }
       }
     } catch (err) {
@@ -177,4 +211,3 @@ export class NotificationService {
     }
   }
 }
-

@@ -9,7 +9,9 @@ import {
 describe('pairleyCopyTemplates (Module 14 Phase 3B)', () => {
   describe('catalog completeness', () => {
     it('has copy for every OfferType the schema defines', () => {
-      const covered = getCopyCatalog().map((e) => e.offerType).sort();
+      const covered = getCopyCatalog()
+        .map((e) => e.offerType)
+        .sort();
       expect(covered).toEqual(Object.values(OfferType).sort());
     });
 
@@ -55,7 +57,9 @@ describe('pairleyCopyTemplates (Module 14 Phase 3B)', () => {
     it('contains no promise language in any rendered output', () => {
       Object.values(OfferType).forEach((offerType) => {
         [1, 2, 5, 10].forEach((requiredPeople) => {
-          const { headline, body } = renderPairleyCopy(offerType, { requiredPeople });
+          const { headline, body } = renderPairleyCopy(offerType, {
+            requiredPeople,
+          });
           FORBIDDEN.forEach((pattern) => {
             expect(`${headline} ${body}`).not.toMatch(pattern);
           });
@@ -96,7 +100,9 @@ describe('pairleyCopyTemplates (Module 14 Phase 3B)', () => {
     it('never leaves an uninterpolated placeholder for any type or size', () => {
       Object.values(OfferType).forEach((offerType) => {
         [0, 1, 2, 7].forEach((requiredPeople) => {
-          const { body, headline } = renderPairleyCopy(offerType, { requiredPeople });
+          const { body, headline } = renderPairleyCopy(offerType, {
+            requiredPeople,
+          });
           expect(`${headline} ${body}`).not.toContain('{{');
         });
       });
@@ -117,10 +123,13 @@ describe('pairleyCopyTemplates (Module 14 Phase 3B)', () => {
     // already supplied its own noun. Caught by rendering a real banner and
     // reading it, not by any assertion that existed at the time.
     it('never doubles the noun after the participant count', () => {
-      const DOUBLED = /\d+\s+(people|customers|members)\s+(people|customers|members)\b/i;
+      const DOUBLED =
+        /\d+\s+(people|customers|members)\s+(people|customers|members)\b/i;
       Object.values(OfferType).forEach((offerType) => {
         [2, 5, 12].forEach((requiredPeople) => {
-          const { body, headline } = renderPairleyCopy(offerType, { requiredPeople });
+          const { body, headline } = renderPairleyCopy(offerType, {
+            requiredPeople,
+          });
           expect(`${headline} ${body}`).not.toMatch(DOUBLED);
         });
       });
@@ -138,14 +147,18 @@ describe('pairleyCopyTemplates (Module 14 Phase 3B)', () => {
 
   describe('solo vs group variants', () => {
     it('uses solo wording when no group is required', () => {
-      const solo = renderPairleyCopy(OfferType.FLAT_DISCOUNT, { requiredPeople: 1 });
+      const solo = renderPairleyCopy(OfferType.FLAT_DISCOUNT, {
+        requiredPeople: 1,
+      });
       expect(solo.groupRequired).toBe(false);
       expect(solo.templateKey).toBe('FLAT_DISCOUNT_SOLO');
       expect(solo.body).not.toMatch(/once \d+ customers/i);
     });
 
     it('uses group wording as soon as more than one participant is needed', () => {
-      const group = renderPairleyCopy(OfferType.FLAT_DISCOUNT, { requiredPeople: 3 });
+      const group = renderPairleyCopy(OfferType.FLAT_DISCOUNT, {
+        requiredPeople: 3,
+      });
       expect(group.groupRequired).toBe(true);
       expect(group.templateKey).toBe('FLAT_DISCOUNT');
       // The noun belongs to the template, not the placeholder — this one
@@ -164,7 +177,9 @@ describe('pairleyCopyTemplates (Module 14 Phase 3B)', () => {
 
   describe('robustness', () => {
     it('falls back to STANDARD for an unknown offer type rather than throwing', () => {
-      const result = renderPairleyCopy('NOT_A_REAL_TYPE', { requiredPeople: 3 });
+      const result = renderPairleyCopy('NOT_A_REAL_TYPE', {
+        requiredPeople: 3,
+      });
       expect(result.templateKey).toBe(OfferType.STANDARD);
       expect(result.body.length).toBeGreaterThan(0);
     });

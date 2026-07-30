@@ -18,7 +18,9 @@ describe('UrlFetchService (SSRF-safe website fetch)', () => {
     // Permissive by default so every pre-existing SSRF/redirect/size
     // assertion below keeps testing exactly what it always did — the
     // robots check is additive, not a new precondition on those paths.
-    robotsService = { isAllowed: jest.fn().mockResolvedValue({ allowed: true }) };
+    robotsService = {
+      isAllowed: jest.fn().mockResolvedValue({ allowed: true }),
+    };
     service = new UrlFetchService(robotsService as unknown as RobotsService);
     fetchMock = jest.fn();
     global.fetch = fetchMock;
@@ -237,7 +239,10 @@ describe('UrlFetchService (SSRF-safe website fetch)', () => {
     // a blocked host must never receive a request of any kind, including
     // the robots.txt lookup itself.
     it('checks SSRF before robots, so a blocked host is never contacted at all', async () => {
-      await expectReason(service.fetchHtml('http://127.0.0.1/'), 'SSRF_BLOCKED');
+      await expectReason(
+        service.fetchHtml('http://127.0.0.1/'),
+        'SSRF_BLOCKED',
+      );
       expect(robotsService.isAllowed).not.toHaveBeenCalled();
     });
 

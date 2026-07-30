@@ -397,7 +397,10 @@ export class OfferController {
   // ownership check: caller must either be interested in the deal or own it.
   @Get('chat/:dealId')
   @UseGuards(JwtAuthGuard)
-  async getCoBuyMessages(@CurrentUser() user: any, @Param('dealId') dealId: string) {
+  async getCoBuyMessages(
+    @CurrentUser() user: any,
+    @Param('dealId') dealId: string,
+  ) {
     return this.offerService.getCoBuyMessages(dealId, user.sub, user.role);
   }
 }

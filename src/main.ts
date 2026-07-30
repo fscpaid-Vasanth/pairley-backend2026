@@ -1,4 +1,7 @@
 import './instrument';
+// Module 14 Phase 3C — must precede any import that loads sharp/libvips:
+// fontconfig settings are read once at libvips initialisation. See fonts.ts.
+import './fonts';
 
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';

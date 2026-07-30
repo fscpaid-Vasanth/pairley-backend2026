@@ -62,13 +62,20 @@ describe('FirebaseStorageProvider', () => {
     jest.clearAllMocks();
     provider = new FirebaseStorageProvider(makeConfig());
     mockExistsSync.mockReturnValue(true);
-    mockReadFileSync.mockReturnValue(JSON.stringify({ project_id: 'pairley2026-4706e' }));
+    mockReadFileSync.mockReturnValue(
+      JSON.stringify({ project_id: 'pairley2026-4706e' }),
+    );
   });
 
   it('put() initializes the app once from the service account file, uploads with a download token, and returns a real Firebase download URL', async () => {
     mockSave.mockResolvedValue(undefined);
 
-    const url = await provider.put(Buffer.from('hello'), 'businesses/shops', '123-shop.png', 'image/png');
+    const url = await provider.put(
+      Buffer.from('hello'),
+      'businesses/shops',
+      '123-shop.png',
+      'image/png',
+    );
 
     expect(mockInitializeApp).toHaveBeenCalledTimes(1);
     expect(mockCert).toHaveBeenCalledWith({ project_id: 'pairley2026-4706e' });
@@ -77,7 +84,9 @@ describe('FirebaseStorageProvider', () => {
     const [buffer, opts] = mockSave.mock.calls[0];
     expect(buffer).toEqual(Buffer.from('hello'));
     expect(opts.metadata.contentType).toBe('image/png');
-    expect(opts.metadata.metadata.firebaseStorageDownloadTokens).toEqual(expect.any(String));
+    expect(opts.metadata.metadata.firebaseStorageDownloadTokens).toEqual(
+      expect.any(String),
+    );
 
     expect(url).toMatch(
       /^https:\/\/firebasestorage\.googleapis\.com\/v0\/b\/pairley2026-4706e\.firebasestorage\.app\/o\/businesses%2Fshops%2F123-shop\.png\?alt=media&token=.+$/,
@@ -101,31 +110,49 @@ describe('FirebaseStorageProvider', () => {
   describe('credential source: FIREBASE_SERVICE_ACCOUNT_JSON env var', () => {
     it('accepts the service account as a raw JSON string, taking priority over the file', async () => {
       const envProvider = new FirebaseStorageProvider(
-        makeConfig({ FIREBASE_SERVICE_ACCOUNT_JSON: JSON.stringify({ project_id: 'from-env' }) }),
+        makeConfig({
+          FIREBASE_SERVICE_ACCOUNT_JSON: JSON.stringify({
+            project_id: 'from-env',
+          }),
+        }),
       );
       mockSave.mockResolvedValue(undefined);
 
-      await envProvider.put(Buffer.from('x'), 'folder', 'name.png', 'image/png');
+      await envProvider.put(
+        Buffer.from('x'),
+        'folder',
+        'name.png',
+        'image/png',
+      );
 
       expect(mockCert).toHaveBeenCalledWith({ project_id: 'from-env' });
       expect(mockExistsSync).not.toHaveBeenCalled();
     });
 
     it('accepts the service account as base64-encoded JSON (avoids .env private_key newline issues)', async () => {
-      const encoded = Buffer.from(JSON.stringify({ project_id: 'from-env-b64' })).toString('base64');
+      const encoded = Buffer.from(
+        JSON.stringify({ project_id: 'from-env-b64' }),
+      ).toString('base64');
       const envProvider = new FirebaseStorageProvider(
         makeConfig({ FIREBASE_SERVICE_ACCOUNT_JSON: encoded }),
       );
       mockSave.mockResolvedValue(undefined);
 
-      await envProvider.put(Buffer.from('x'), 'folder', 'name.png', 'image/png');
+      await envProvider.put(
+        Buffer.from('x'),
+        'folder',
+        'name.png',
+        'image/png',
+      );
 
       expect(mockCert).toHaveBeenCalledWith({ project_id: 'from-env-b64' });
     });
 
     it('throws a clear error when the env var is set but is neither valid JSON nor valid base64 JSON', async () => {
       const envProvider = new FirebaseStorageProvider(
-        makeConfig({ FIREBASE_SERVICE_ACCOUNT_JSON: 'not json and not base64 json either' }),
+        makeConfig({
+          FIREBASE_SERVICE_ACCOUNT_JSON: 'not json and not base64 json either',
+        }),
       );
       await expect(
         envProvider.put(Buffer.from('x'), 'folder', 'name.png', 'image/png'),
@@ -147,7 +174,10 @@ describe('FirebaseStorageProvider', () => {
     const result = await provider.get('claim-evidence/1-evidence.pdf');
 
     expect(mockFile).toHaveBeenCalledWith('claim-evidence/1-evidence.pdf');
-    expect(result).toEqual({ buffer: Buffer.from('file-bytes'), contentType: 'application/pdf' });
+    expect(result).toEqual({
+      buffer: Buffer.from('file-bytes'),
+      contentType: 'application/pdf',
+    });
   });
 
   it('get() resolves a full Firebase download URL back down to its object key', async () => {

@@ -15,8 +15,16 @@ const CLAIMED = { business_status: BusinessStatus.CLAIMED };
 const UNCLAIMED = { business_status: BusinessStatus.UNCLAIMED };
 
 const ANON = {};
-const CUSTOMER = { userId: 'cust-1', role: 'Customer', ownerBusinessId: 'biz-1' };
-const OTHER_BUSINESS = { userId: 'biz-9', role: 'Business', ownerBusinessId: 'biz-1' };
+const CUSTOMER = {
+  userId: 'cust-1',
+  role: 'Customer',
+  ownerBusinessId: 'biz-1',
+};
+const OTHER_BUSINESS = {
+  userId: 'biz-9',
+  role: 'Business',
+  ownerBusinessId: 'biz-1',
+};
 const OWNER = { userId: 'biz-1', role: 'Business', ownerBusinessId: 'biz-1' };
 const ADMIN = { userId: 'admin-1', role: 'Admin', ownerBusinessId: 'biz-1' };
 
@@ -68,9 +76,14 @@ describe('offerVisibility (Module 14 Phase 3A — contact protection)', () => {
 
     it('keeps contact columns out of the public business projection', () => {
       const keys = Object.keys(PUBLIC_BUSINESS_SELECT);
-      ['mobile', 'email', 'owner_name', 'address', 'whatsapp', 'support_number'].forEach(
-        (field) => expect(keys).not.toContain(field),
-      );
+      [
+        'mobile',
+        'email',
+        'owner_name',
+        'address',
+        'whatsapp',
+        'support_number',
+      ].forEach((field) => expect(keys).not.toContain(field));
     });
 
     it('exposes only coarse location publicly — city/state/mall, never street address', () => {
@@ -136,7 +149,9 @@ describe('offerVisibility (Module 14 Phase 3A — contact protection)', () => {
     // A logged-in merchant is not entitled to a competitor's contact details
     // just for being authenticated.
     it('refuses a different business viewing someone else’s unclaimed listing', () => {
-      expect(resolveContactAccess(OTHER_BUSINESS, UNCLAIMED).canSeeContact).toBe(false);
+      expect(
+        resolveContactAccess(OTHER_BUSINESS, UNCLAIMED).canSeeContact,
+      ).toBe(false);
     });
 
     it('treats a missing/unknown business as not claimed', () => {
@@ -149,8 +164,9 @@ describe('offerVisibility (Module 14 Phase 3A — contact protection)', () => {
 
     it('does not treat a REMOVED business as claimed', () => {
       expect(
-        resolveContactAccess(CUSTOMER, { business_status: BusinessStatus.REMOVED })
-          .canSeeContact,
+        resolveContactAccess(CUSTOMER, {
+          business_status: BusinessStatus.REMOVED,
+        }).canSeeContact,
       ).toBe(false);
     });
   });
@@ -164,7 +180,9 @@ describe('offerVisibility (Module 14 Phase 3A — contact protection)', () => {
 
     it('is never true for an anonymous viewer, even with a missing owner id', () => {
       expect(isOwner({})).toBe(false);
-      expect(isOwner({ userId: undefined, ownerBusinessId: undefined })).toBe(false);
+      expect(isOwner({ userId: undefined, ownerBusinessId: undefined })).toBe(
+        false,
+      );
     });
 
     it('identifies admins by role', () => {
@@ -176,7 +194,10 @@ describe('offerVisibility (Module 14 Phase 3A — contact protection)', () => {
 
   describe('buildBusinessSelect', () => {
     it('adds contact columns only when access allows', () => {
-      const allowed = buildBusinessSelect({ canSeeContact: true, notice: 'AVAILABLE' });
+      const allowed = buildBusinessSelect({
+        canSeeContact: true,
+        notice: 'AVAILABLE',
+      });
       expect(allowed).toHaveProperty('mobile');
       expect(allowed).toHaveProperty('email');
       expect(allowed).toHaveProperty('business_name');
@@ -197,10 +218,13 @@ describe('offerVisibility (Module 14 Phase 3A — contact protection)', () => {
 
   describe('decorateBusinessContact', () => {
     it('annotates the payload so the UI can explain the absence', () => {
-      const result = decorateBusinessContact({ business_name: 'Spec Gym' }, {
-        canSeeContact: false,
-        notice: 'SIGN_UP_REQUIRED',
-      });
+      const result = decorateBusinessContact(
+        { business_name: 'Spec Gym' },
+        {
+          canSeeContact: false,
+          notice: 'SIGN_UP_REQUIRED',
+        },
+      );
       expect(result).toEqual({
         business_name: 'Spec Gym',
         contact_available: false,
@@ -209,16 +233,22 @@ describe('offerVisibility (Module 14 Phase 3A — contact protection)', () => {
     });
 
     it('never invents contact fields it wasn’t given', () => {
-      const result = decorateBusinessContact({ business_name: 'Spec Gym' }, {
-        canSeeContact: true,
-        notice: 'AVAILABLE',
-      });
+      const result = decorateBusinessContact(
+        { business_name: 'Spec Gym' },
+        {
+          canSeeContact: true,
+          notice: 'AVAILABLE',
+        },
+      );
       expect(result).not.toHaveProperty('mobile');
     });
 
     it('passes a null business straight through', () => {
       expect(
-        decorateBusinessContact(null, { canSeeContact: false, notice: 'SIGN_UP_REQUIRED' }),
+        decorateBusinessContact(null, {
+          canSeeContact: false,
+          notice: 'SIGN_UP_REQUIRED',
+        }),
       ).toBeNull();
     });
   });

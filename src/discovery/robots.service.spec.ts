@@ -277,7 +277,9 @@ describe('RobotsService (Module 14 Phase 1 — crawl permission)', () => {
 
   describe('caching', () => {
     it('fetches robots.txt once per origin across repeated checks', async () => {
-      fetchMock.mockImplementation(robotsResponse('User-agent: *\nDisallow: /x'));
+      fetchMock.mockImplementation(
+        robotsResponse('User-agent: *\nDisallow: /x'),
+      );
       await service.isAllowed('https://ex.com/a');
       await service.isAllowed('https://ex.com/b');
       await service.isAllowed('https://ex.com/c');
@@ -285,14 +287,18 @@ describe('RobotsService (Module 14 Phase 1 — crawl permission)', () => {
     });
 
     it('caches per origin, not globally', async () => {
-      fetchMock.mockImplementation(robotsResponse('User-agent: *\nDisallow: /x'));
+      fetchMock.mockImplementation(
+        robotsResponse('User-agent: *\nDisallow: /x'),
+      );
       await service.isAllowed('https://one.com/a');
       await service.isAllowed('https://two.com/a');
       expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 
     it('treats http and https as separate origins', async () => {
-      fetchMock.mockImplementation(robotsResponse('User-agent: *\nDisallow: /x'));
+      fetchMock.mockImplementation(
+        robotsResponse('User-agent: *\nDisallow: /x'),
+      );
       await service.isAllowed('http://ex.com/a');
       await service.isAllowed('https://ex.com/a');
       expect(fetchMock).toHaveBeenCalledTimes(2);

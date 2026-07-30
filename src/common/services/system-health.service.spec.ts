@@ -10,16 +10,26 @@ describe('SystemHealthService', () => {
     storageResult,
   }: {
     databaseOk: boolean;
-    storageResult: { ok: boolean; mode: 'mock' | 's3' | 'firebase'; error?: string };
+    storageResult: {
+      ok: boolean;
+      mode: 'mock' | 's3' | 'firebase';
+      error?: string;
+    };
   }) => {
     const health = {
-      check: jest.fn().mockImplementation(() =>
-        databaseOk ? Promise.resolve({}) : Promise.reject(new Error('db down')),
-      ),
+      check: jest
+        .fn()
+        .mockImplementation(() =>
+          databaseOk
+            ? Promise.resolve({})
+            : Promise.reject(new Error('db down')),
+        ),
     };
     const prismaHealth = { pingCheck: jest.fn() };
     const prismaService = {};
-    const storageService = { checkHealth: jest.fn().mockResolvedValue(storageResult) };
+    const storageService = {
+      checkHealth: jest.fn().mockResolvedValue(storageResult),
+    };
 
     return new SystemHealthService(
       health as any,
@@ -30,7 +40,10 @@ describe('SystemHealthService', () => {
   };
 
   it('reports status "ok" and storageProvider "s3" when both database and storage are healthy', async () => {
-    const service = makeService({ databaseOk: true, storageResult: { ok: true, mode: 's3' } });
+    const service = makeService({
+      databaseOk: true,
+      storageResult: { ok: true, mode: 's3' },
+    });
     const result = await service.check();
 
     expect(result.status).toBe('ok');
@@ -42,7 +55,11 @@ describe('SystemHealthService', () => {
   it('reports storageProvider "firebase" and status "degraded" with the underlying error when Firebase storage is unreachable', async () => {
     const service = makeService({
       databaseOk: true,
-      storageResult: { ok: false, mode: 'firebase', error: 'firebase-service-account.json not found' },
+      storageResult: {
+        ok: false,
+        mode: 'firebase',
+        error: 'firebase-service-account.json not found',
+      },
     });
     const result = await service.check();
 
@@ -53,7 +70,10 @@ describe('SystemHealthService', () => {
   });
 
   it('reports status "down" when the database check fails, regardless of storage', async () => {
-    const service = makeService({ databaseOk: false, storageResult: { ok: true, mode: 's3' } });
+    const service = makeService({
+      databaseOk: false,
+      storageResult: { ok: true, mode: 's3' },
+    });
     const result = await service.check();
 
     expect(result.status).toBe('down');
@@ -61,7 +81,10 @@ describe('SystemHealthService', () => {
   });
 
   it('omits storageError entirely (not even as undefined key noise) when storage is healthy', async () => {
-    const service = makeService({ databaseOk: true, storageResult: { ok: true, mode: 'mock' } });
+    const service = makeService({
+      databaseOk: true,
+      storageResult: { ok: true, mode: 'mock' },
+    });
     const result = await service.check();
 
     expect('storageError' in result).toBe(false);

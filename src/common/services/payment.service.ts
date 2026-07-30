@@ -7,15 +7,24 @@ export class PaymentService {
   private readonly useMock: boolean;
 
   constructor(private configService: ConfigService) {
-    const mockPaymentVal = this.configService.get<any>('USE_MOCK_PAYMENT', true);
+    const mockPaymentVal = this.configService.get<any>(
+      'USE_MOCK_PAYMENT',
+      true,
+    );
     this.useMock = mockPaymentVal === true || mockPaymentVal === 'true';
   }
 
-  async createOrder(amount: number, currency = 'INR', receipt: string): Promise<any> {
+  async createOrder(
+    amount: number,
+    currency = 'INR',
+    receipt: string,
+  ): Promise<any> {
     const orderId = `order_${Math.random().toString(36).substring(2, 15)}`;
-    
+
     if (this.useMock) {
-      this.logger.log(`[MOCK PAYMENT] Created Razorpay order ${orderId} for ₹${amount}`);
+      this.logger.log(
+        `[MOCK PAYMENT] Created Razorpay order ${orderId} for ₹${amount}`,
+      );
       return {
         id: orderId,
         entity: 'order',
@@ -38,9 +47,15 @@ export class PaymentService {
     }
   }
 
-  async verifySignature(paymentId: string, orderId: string, signature: string): Promise<boolean> {
+  async verifySignature(
+    paymentId: string,
+    orderId: string,
+    signature: string,
+  ): Promise<boolean> {
     if (this.useMock) {
-      this.logger.log(`[MOCK PAYMENT] Verified Razorpay signature for payment ${paymentId}`);
+      this.logger.log(
+        `[MOCK PAYMENT] Verified Razorpay signature for payment ${paymentId}`,
+      );
       return true;
     }
 
@@ -48,7 +63,9 @@ export class PaymentService {
       // Real signature verification logic goes here using crypto hmac
       return true;
     } catch (error) {
-      this.logger.error(`Failed to verify Razorpay signature: ${error.message}`);
+      this.logger.error(
+        `Failed to verify Razorpay signature: ${error.message}`,
+      );
       return false;
     }
   }
