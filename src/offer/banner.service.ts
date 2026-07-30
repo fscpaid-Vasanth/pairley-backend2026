@@ -1,4 +1,5 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../common/services/storage.service';
 import { BannerRenderService } from './banner-render.service';
@@ -439,9 +440,9 @@ export class BannerService {
         version_no: versionNo,
         // BannerSnapshot is a plain, JSON-serialisable shape; Prisma's Json
         // input type just doesn't structurally recognise a named interface,
-        // the same reason every other JSON snapshot write in this codebase
-        // (OfferVersion, LeadMessage.payload, etc.) casts through unknown.
-        snapshot: snapshot,
+        // the same reason enrichment.service.ts's enrichment_metadata write
+        // casts through unknown rather than relying on structural match.
+        snapshot: snapshot as unknown as Prisma.InputJsonValue,
         changed_by: adminId,
         change_type: changeType,
       },
