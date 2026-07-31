@@ -17,11 +17,13 @@ const mockGetApps = jest.fn().mockReturnValue([]);
 const mockSave = jest.fn();
 const mockDownload = jest.fn();
 const mockGetMetadata = jest.fn();
+const mockDelete = jest.fn();
 const mockBucketExists = jest.fn();
 const mockFile = jest.fn().mockImplementation(() => ({
   save: mockSave,
   download: mockDownload,
   getMetadata: mockGetMetadata,
+  delete: mockDelete,
 }));
 const mockBucket = jest.fn().mockImplementation(() => ({
   file: mockFile,
@@ -225,5 +227,28 @@ describe('FirebaseStorageProvider', () => {
     mockBucketExists.mockRejectedValue(new Error('network error'));
     const result = await provider.health();
     expect(result).toEqual({ ok: false, error: 'network error' });
+  });
+
+  it('remove() deletes the object by key, ignoring not-found', async () => {
+    mockDelete.mockResolvedValue(undefined);
+    await provider.remove('businesses/shops/123-shop.png');
+    expect(mockFile).toHaveBeenCalledWith('businesses/shops/123-shop.png');
+    expect(mockDelete).toHaveBeenCalledWith({ ignoreNotFound: true });
+  });
+
+  it('remove() resolves a full Firebase download URL back down to its object key before deleting', async () => {
+    mockDelete.mockResolvedValue(undefined);
+    const fullUrl =
+      'https://firebasestorage.googleapis.com/v0/b/pairley2026-4706e.firebasestorage.app/o/businesses%2Fshops%2F123-shop.png?alt=media&token=abc-123';
+    await provider.remove(fullUrl);
+    expect(mockFile).toHaveBeenCalledWith('businesses/shops/123-shop.png');
+  });
+
+  // The interface contract: a delete failure must never block the caller.
+  it('remove() never throws, even when the underlying delete() call fails', async () => {
+    mockDelete.mockRejectedValue(new Error('permission-denied'));
+    await expect(
+      provider.remove('businesses/shops/123-shop.png'),
+    ).resolves.toBeUndefined();
   });
 });

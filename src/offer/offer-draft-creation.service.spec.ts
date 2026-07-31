@@ -1,0 +1,151 @@
+import { OfferDraftCreationService } from './offer-draft-creation.service';
+
+describe('OfferDraftCreationService', () => {
+  let prisma: {
+    business: { findUnique: jest.Mock; create: jest.Mock };
+    $transaction: jest.Mock;
+  };
+  let service: OfferDraftCreationService;
+
+  beforeEach(() => {
+    prisma = {
+      business: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ id: 'biz-1' }),
+      },
+      $transaction: jest.fn(),
+    };
+    service = new OfferDraftCreationService(prisma as any);
+  });
+
+  describe('matchOrCreateBusiness', () => {
+    it('reuses an existing business found by mobile, without creating a new one', async () => {
+      prisma.business.findUnique.mockResolvedValue({ id: 'existing-biz' });
+
+      const result = await service.matchOrCreateBusiness({
+        merchantName: 'Spec Gym',
+        mobile: '9876543210',
+      });
+
+      expect(result).toEqual({ businessId: 'existing-biz', created: false });
+      expect(prisma.business.create).not.toHaveBeenCalled();
+    });
+
+    it('creates a new UNCLAIMED business when no mobile match exists', async () => {
+      const result = await service.matchOrCreateBusiness({
+        merchantName: 'Spec Gym',
+        mobile: '9876543210',
+        category: 'Fitness',
+      });
+
+      expect(result).toEqual({ businessId: 'biz-1', created: true });
+      expect(prisma.business.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            business_name: 'Spec Gym',
+            mobile: '9876543210',
+            category: 'Fitness',
+            business_status: 'UNCLAIMED',
+            source: 'ADMIN',
+          }),
+        }),
+      );
+    });
+
+    // No phone at all (Offer Publisher's Step 1 placeholder case, before a
+    // merchant is known) must not attempt a lookup that would incorrectly
+    // match every other phone-less business by a shared null/undefined key.
+    it('skips the lookup and creates directly when no mobile is given', async () => {
+      const result = await service.matchOrCreateBusiness({
+        merchantName: 'Untitled Merchant',
+      });
+
+      expect(prisma.business.findUnique).not.toHaveBeenCalled();
+      expect(result.created).toBe(true);
+    });
+
+    it('fills every NOT NULL Business column even when the caller supplies almost nothing', async () => {
+      await service.matchOrCreateBusiness({ merchantName: 'X' });
+
+      const data = prisma.business.create.mock.calls[0][0].data;
+      expect(data.owner_name).toBe('X');
+      expect(data.business_type).toBe('');
+      expect(data.category).toBe('');
+      expect(data.address).toBe('');
+      expect(data.city).toBe('');
+      expect(data.state).toBe('');
+      expect(data.pincode).toBe('');
+    });
+
+    it('uses the given transaction client instead of the default prisma instance when provided', async () => {
+      const txClient = {
+        business: {
+          findUnique: jest.fn().mockResolvedValue(null),
+          create: jest.fn().mockResolvedValue({ id: 'tx-biz' }),
+        },
+      };
+
+      const result = await service.matchOrCreateBusiness(
+        { merchantName: 'Spec Gym', mobile: '111' },
+        txClient as any,
+      );
+
+      expect(result.businessId).toBe('tx-biz');
+      expect(txClient.business.create).toHaveBeenCalled();
+      expect(prisma.business.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('createPlaceholderDraft', () => {
+    it('creates a placeholder UNCLAIMED business and a DRAFT offer with the cover image attached, atomically', async () => {
+      const business = { id: 'biz-1' };
+      const offer = { id: 'offer-1' };
+      const tx = {
+        business: { create: jest.fn().mockResolvedValue(business) },
+        offer: { create: jest.fn().mockResolvedValue(offer) },
+      };
+      prisma.$transaction.mockImplementation((cb) => cb(tx));
+
+      const result = await service.createPlaceholderDraft(
+        'https://firebasestorage.googleapis.com/v0/b/x/o/cover.jpg',
+      );
+
+      expect(result).toEqual({ businessId: 'biz-1', offerId: 'offer-1' });
+      expect(tx.business.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            business_status: 'UNCLAIMED',
+            source: 'ADMIN',
+          }),
+        }),
+      );
+      expect(tx.offer.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            business_id: 'biz-1',
+            status: 'DRAFT',
+            source: 'ADMIN',
+            cover_image:
+              'https://firebasestorage.googleapis.com/v0/b/x/o/cover.jpg',
+            offer_type: 'STANDARD',
+            required_people: 1,
+          }),
+        }),
+      );
+    });
+
+    it('sets a 30-day validity window from now, so a placeholder draft is never immediately expired', async () => {
+      const tx = {
+        business: { create: jest.fn().mockResolvedValue({ id: 'biz-1' }) },
+        offer: { create: jest.fn().mockResolvedValue({ id: 'offer-1' }) },
+      };
+      prisma.$transaction.mockImplementation((cb) => cb(tx));
+
+      await service.createPlaceholderDraft('https://example.com/x.jpg');
+
+      const data = tx.offer.create.mock.calls[0][0].data;
+      const spanMs = data.end_date.getTime() - data.start_date.getTime();
+      expect(spanMs).toBe(30 * 24 * 60 * 60 * 1000);
+    });
+  });
+});

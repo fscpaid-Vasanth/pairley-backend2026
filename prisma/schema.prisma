@@ -57,6 +57,11 @@ enum OfferStatus {
   REJECTED
   PAUSED
   ARCHIVED
+  // Offer Publisher's Draft -> Approved -> Publish pipeline. Deliberately
+  // not PENDING_APPROVAL — that value means "submitted, awaiting someone
+  // else's review" (the opposite direction), where APPROVED here means
+  // "reviewed positively, not yet live." See offer-publisher module docs.
+  APPROVED
 }
 
 enum InterestStatus {
@@ -216,6 +221,13 @@ model Business {
   state                String
   pincode              String
   mall_name            String?
+  // Offer Publisher's per-draft form asks City AND Area as distinct fields
+  // — area is a finer-grained locality than city, coarser than a street
+  // address (e.g. "Koramangala" within "Bangalore").
+  area                 String?
+  // A raw pasted Google Maps URL, distinct from geo_lat/geo_lng below (an
+  // admin filling in a draft has a link, not necessarily coordinates).
+  google_maps_link     String?
   aadhaar_number       String?
   aadhaar_photo        String?
   pan_number           String?
@@ -332,6 +344,12 @@ model Offer {
   status          OfferStatus @default(DRAFT)
   source          Source      @default(MANUAL) // "offer_source" — reused from Module 1, shared with Business
   whatsapp_number String?
+  // Offer Publisher's per-draft form; no prior column for offer-level terms
+  // existed (facility_details is unrelated — staff/specialist JSON).
+  terms             String?
+  // Set when an admin rejects a draft via the Offer Publisher approval
+  // step — surfaced back to them so a re-edit knows what to fix.
+  rejection_reason  String?
 
   // Legacy media — kept for migration compatibility, no longer written by new
   // code. Backfilled into cover_image/gallery_images at migration time.

@@ -33,6 +33,7 @@ class ModerateOfferDto {
     'PAUSED',
     'ARCHIVED',
     'EXPIRED',
+    'APPROVED',
   ])
   status: string;
 }

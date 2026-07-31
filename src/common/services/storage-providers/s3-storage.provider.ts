@@ -4,6 +4,7 @@ import {
   S3Client,
   PutObjectCommand,
   GetObjectCommand,
+  DeleteObjectCommand,
   HeadBucketCommand,
 } from '@aws-sdk/client-s3';
 import { CloudStorageProvider } from './cloud-storage-provider.interface';
@@ -104,6 +105,23 @@ export class S3StorageProvider implements CloudStorageProvider {
     } catch (error) {
       this.logger.error(`Failed to get file from S3: ${error.message}`);
       throw new Error(`S3 fetch failed: ${error.message}`);
+    }
+  }
+
+  // Best-effort per the interface contract — never throws. Likely to hit
+  // the same AWSCompromisedKeyQuarantineV3 denial already confirmed against
+  // GetObject/ListBucket on this account (PutObject is the only action
+  // confirmed still working); logged and swallowed rather than surfaced,
+  // since S3 is the provider being phased out, not the one new code should
+  // depend on working.
+  async remove(key: string): Promise<void> {
+    try {
+      const s3 = this.client();
+      await s3.send(
+        new DeleteObjectCommand({ Bucket: this.bucketName, Key: key }),
+      );
+    } catch (error) {
+      this.logger.error(`Failed to delete from S3: ${error.message}`);
     }
   }
 

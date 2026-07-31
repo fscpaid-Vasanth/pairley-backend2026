@@ -38,13 +38,20 @@ describe('StorageService', () => {
       buffer: Buffer.from('data'),
       contentType: 'image/png',
     }),
+    remove: jest.fn().mockResolvedValue(undefined),
     health: jest.fn().mockResolvedValue({ ok: true }),
   });
 
   const makeS3Provider = () =>
-    ({ get: jest.fn() }) as unknown as jest.Mocked<S3StorageProvider>;
+    ({
+      get: jest.fn(),
+      remove: jest.fn().mockResolvedValue(undefined),
+    }) as unknown as jest.Mocked<S3StorageProvider>;
   const makeFirebaseProvider = () =>
-    ({ get: jest.fn() }) as unknown as jest.Mocked<FirebaseStorageProvider>;
+    ({
+      get: jest.fn(),
+      remove: jest.fn().mockResolvedValue(undefined),
+    }) as unknown as jest.Mocked<FirebaseStorageProvider>;
 
   afterEach(() => {
     jest.clearAllMocks();
@@ -89,6 +96,28 @@ describe('StorageService', () => {
       const result = await service.checkHealth();
       expect(result).toEqual({ ok: true, mode: 'mock' });
       expect(provider.health).not.toHaveBeenCalled();
+    });
+
+    it('deleteFile removes the local file and never calls the injected provider', async () => {
+      const file = {
+        buffer: Buffer.from('hello'),
+        originalname: 'test.png',
+        mimetype: 'image/png',
+      } as Express.Multer.File;
+      const url = await service.uploadFile(file, 'phase1-spec-folder');
+      const diskPath = path.join(testUploadDir, url.replace('/uploads/', ''));
+      expect(fs.existsSync(diskPath)).toBe(true);
+
+      await service.deleteFile(url);
+
+      expect(fs.existsSync(diskPath)).toBe(false);
+      expect(provider.remove).not.toHaveBeenCalled();
+    });
+
+    it('deleteFile on a file that never existed does not throw', async () => {
+      await expect(
+        service.deleteFile('/uploads/phase1-spec-folder/never-existed.png'),
+      ).resolves.toBeUndefined();
     });
   });
 
@@ -296,6 +325,63 @@ describe('StorageService', () => {
         await expect(
           service.getFileByUrl('https://example.com/some/external/page'),
         ).rejects.toThrow('Unrecognized storage URL');
+      });
+    });
+
+    describe('deleteFile — best-effort removal, dispatched by URL shape', () => {
+      it('routes an S3 URL to s3Provider.remove with the extracted key, regardless of the active STORAGE_PROVIDER', async () => {
+        const firebaseActiveService = new StorageService(
+          makeConfig({ USE_MOCK_STORAGE: false, STORAGE_PROVIDER: 'firebase' }),
+          provider,
+          s3Provider,
+          firebaseProvider,
+        );
+
+        await firebaseActiveService.deleteFile(
+          'https://pairley-storage.s3.ap-south-1.amazonaws.com/bulk-import/images/123-cover.jpg',
+        );
+
+        expect(s3Provider.remove).toHaveBeenCalledWith(
+          'bulk-import/images/123-cover.jpg',
+        );
+        expect(firebaseProvider.remove).not.toHaveBeenCalled();
+      });
+
+      it('routes a Firebase download URL to firebaseProvider.remove with the full URL', async () => {
+        const firebaseUrl =
+          'https://firebasestorage.googleapis.com/v0/b/pairley2026-4706e.firebasestorage.app/o/offer-publisher%2Fcovers%2F1-cover.jpg?alt=media&token=abc';
+
+        await service.deleteFile(firebaseUrl);
+
+        expect(firebaseProvider.remove).toHaveBeenCalledWith(firebaseUrl);
+        expect(s3Provider.remove).not.toHaveBeenCalled();
+      });
+
+      it('falls back to the active provider for a bare key (no scheme)', async () => {
+        await service.deleteFile('offer-publisher/covers/local-key.png');
+        expect(provider.remove).toHaveBeenCalledWith(
+          'offer-publisher/covers/local-key.png',
+        );
+      });
+
+      it('is a silent no-op for an empty/undefined url — never throws, never calls a provider', async () => {
+        await expect(service.deleteFile('')).resolves.toBeUndefined();
+        expect(provider.remove).not.toHaveBeenCalled();
+        expect(s3Provider.remove).not.toHaveBeenCalled();
+        expect(firebaseProvider.remove).not.toHaveBeenCalled();
+      });
+
+      it('logs and swallows rather than throwing for a URL that matches neither provider', async () => {
+        await expect(
+          service.deleteFile('https://example.com/some/external/page'),
+        ).resolves.toBeUndefined();
+      });
+
+      it('never blocks on a provider-level failure — swallows and resolves', async () => {
+        provider.remove.mockRejectedValue(new Error('permission denied'));
+        await expect(
+          service.deleteFile('offer-publisher/covers/x.png'),
+        ).resolves.toBeUndefined();
       });
     });
   });

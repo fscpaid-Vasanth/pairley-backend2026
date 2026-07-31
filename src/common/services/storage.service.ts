@@ -190,4 +190,55 @@ export class StorageService {
 
     throw new Error(`Unrecognized storage URL: ${url}`);
   }
+
+  // Best-effort — a delete failure must never block the caller's actual
+  // action (e.g. an admin removing one gallery image from a draft they're
+  // still editing). Dispatches by URL shape, the same way getFileByUrl()
+  // above does, since a delete can be requested for either provider's URL
+  // regardless of which one is currently active for new writes — a
+  // pre-cutover S3 URL must still be deletable after STORAGE_PROVIDER
+  // flips to firebase.
+  async deleteFile(url: string): Promise<void> {
+    if (!url) return;
+
+    if (this.useMock) {
+      const key = url.startsWith('/uploads/')
+        ? url.replace(/^\/uploads\//, '')
+        : url;
+      const filePath = path.join(this.uploadDir, key);
+      try {
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      } catch (err) {
+        this.logger.error(
+          `[MOCK STORAGE] Failed to delete ${filePath}: ${err.message}`,
+        );
+      }
+      return;
+    }
+
+    try {
+      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        await this.provider.remove(url);
+        return;
+      }
+
+      const parsedUrl = new URL(url);
+      if (parsedUrl.hostname.includes('.amazonaws.com')) {
+        await this.s3Provider.remove(parsedUrl.pathname.substring(1));
+        return;
+      }
+      if (
+        parsedUrl.hostname === 'firebasestorage.googleapis.com' ||
+        parsedUrl.hostname.endsWith('.firebasestorage.app')
+      ) {
+        await this.firebaseProvider.remove(url);
+        return;
+      }
+      this.logger.warn(
+        `deleteFile: unrecognized storage URL, skipping: ${url}`,
+      );
+    } catch (err) {
+      this.logger.error(`deleteFile failed for ${url}: ${err.message}`);
+    }
+  }
 }

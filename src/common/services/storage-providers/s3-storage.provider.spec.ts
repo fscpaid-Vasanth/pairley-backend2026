@@ -24,6 +24,9 @@ jest.mock('@aws-sdk/client-s3', () => ({
   GetObjectCommand: jest
     .fn()
     .mockImplementation((input) => ({ __cmd: 'Get', input })),
+  DeleteObjectCommand: jest
+    .fn()
+    .mockImplementation((input) => ({ __cmd: 'Delete', input })),
   HeadBucketCommand: jest
     .fn()
     .mockImplementation((input) => ({ __cmd: 'Head', input })),
@@ -126,5 +129,27 @@ describe('S3StorageProvider', () => {
     mockSend.mockRejectedValue(new Error('quarantine: access denied'));
     const result = await provider.health();
     expect(result).toEqual({ ok: false, error: 'quarantine: access denied' });
+  });
+
+  it('remove() sends a DeleteObjectCommand for the given key', async () => {
+    mockSend.mockResolvedValue({});
+    await provider.remove('businesses/shops/123-shop.png');
+    expect(mockSend).toHaveBeenCalledTimes(1);
+    const command = mockSend.mock.calls[0][0];
+    expect(command.__cmd).toBe('Delete');
+    expect(command.input).toEqual({
+      Bucket: 'pairley-storage',
+      Key: 'businesses/shops/123-shop.png',
+    });
+  });
+
+  // The interface contract: a delete failure (e.g. the AWS quarantine
+  // denying DeleteObject the same way it denies GetObject) must never
+  // block the caller's actual action.
+  it('remove() never throws, even when the S3 call fails', async () => {
+    mockSend.mockRejectedValue(new Error('quarantine: access denied'));
+    await expect(
+      provider.remove('businesses/shops/123-shop.png'),
+    ).resolves.toBeUndefined();
   });
 });

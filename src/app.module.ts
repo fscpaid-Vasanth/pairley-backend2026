@@ -22,7 +22,7 @@ import { SupportModule } from './support/support.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { WhatsappModule } from './whatsapp/whatsapp.module';
 import { DiscoveryModule } from './discovery/discovery.module';
-import { BulkImportModule } from './bulk-import/bulk-import.module';
+import { OfferPublisherModule } from './offer-publisher/offer-publisher.module';
 
 @Module({
   imports: [
@@ -51,7 +51,7 @@ import { BulkImportModule } from './bulk-import/bulk-import.module';
     DashboardModule,
     WhatsappModule,
     DiscoveryModule,
-    BulkImportModule,
+    OfferPublisherModule,
   ],
   controllers: [AppController],
   providers: [

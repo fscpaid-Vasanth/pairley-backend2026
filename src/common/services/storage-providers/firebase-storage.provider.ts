@@ -171,6 +171,21 @@ export class FirebaseStorageProvider implements CloudStorageProvider {
     }
   }
 
+  // Best-effort per the interface contract — never throws. ignoreNotFound
+  // covers the case of deleting something already gone (a double-click, a
+  // retry), which should be a silent no-op, not an error.
+  async remove(key: string): Promise<void> {
+    try {
+      const bucket = this.ensureBucket();
+      const resolvedKey = this.resolveKey(key);
+      await bucket.file(resolvedKey).delete({ ignoreNotFound: true });
+    } catch (error) {
+      this.logger.error(
+        `Failed to delete from Firebase Storage: ${error.message}`,
+      );
+    }
+  }
+
   async health(): Promise<{ ok: boolean; error?: string }> {
     try {
       const bucket = this.ensureBucket();
