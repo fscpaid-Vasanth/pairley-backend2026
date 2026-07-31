@@ -13,6 +13,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../common/services/storage.service';
+import { FileImportError } from '../discovery/file-import.errors';
 import { validateSheetFile } from './sheetFileValidation';
 import { parseOfferRows } from './bulkOfferParsers';
 import {
@@ -48,7 +49,15 @@ export class BulkImportService {
    * writes a Business+Offer per row — that's what the scheduler is for.
    */
   async createBatch(file: Express.Multer.File, adminId: string) {
-    const format = validateSheetFile(file); // throws FileImportError on a bad file — let it propagate, the controller maps it to 400
+    let format: ReturnType<typeof validateSheetFile>;
+    try {
+      format = validateSheetFile(file);
+    } catch (err) {
+      if (err instanceof FileImportError) {
+        throw new BadRequestException(err.message);
+      }
+      throw err;
+    }
     const fileUrl = await this.storage.uploadFile(file, UPLOAD_FOLDER);
 
     let rows: BulkOfferRowInput[];

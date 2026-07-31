@@ -1,5 +1,5 @@
+import { BadRequestException } from '@nestjs/common';
 import { BulkImportService } from './bulk-import.service';
-import { FileImportError } from '../discovery/file-import.errors';
 
 function csvBuffer(rows: string[][]): Buffer {
   return Buffer.from(rows.map((r) => r.join(',')).join('\n'), 'utf8');
@@ -165,7 +165,16 @@ describe('BulkImportService', () => {
   });
 
   describe('createBatch', () => {
-    it('propagates a FileImportError for an unrecognised file type before touching storage', async () => {
+    // Regression test: this used to assert the underlying FileImportError
+    // propagated raw, which is what let it happen — FileImportError extends
+    // plain Error, not HttpException, so an uncaught one reaches Nest's
+    // default handler as an unhandled 500, not a 400. An admin dropping the
+    // wrong file type (e.g. a PDF here) into the CSV/XLSX importer produced
+    // a generic "Internal server error" toast instead of a clear rejection
+    // message. Fixed by catching FileImportError in createBatch and
+    // rethrowing as BadRequestException, matching the same pattern already
+    // used for claim-evidence uploads (claim-request.service.ts).
+    it('rejects an unrecognised file type as a BadRequestException, not a raw FileImportError, before touching storage', async () => {
       const badFile = {
         originalname: 'offers.pdf',
         mimetype: 'application/pdf',
@@ -173,7 +182,10 @@ describe('BulkImportService', () => {
         buffer: Buffer.from('x'),
       } as Express.Multer.File;
       await expect(service.createBatch(badFile, 'admin-1')).rejects.toThrow(
-        FileImportError,
+        BadRequestException,
+      );
+      await expect(service.createBatch(badFile, 'admin-1')).rejects.toThrow(
+        /Unsupported file type/,
       );
       expect(storage.uploadFile).not.toHaveBeenCalled();
     });
