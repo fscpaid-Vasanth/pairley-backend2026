@@ -184,6 +184,29 @@ describe('OfferPublisherService', () => {
       expect(result.status).toBe('APPROVED');
     });
 
+    it('approves a BOGO-style offer with no original_price — that field is not required', async () => {
+      const bogo = draftOffer({
+        title: 'Buy 2 Get 1 Free',
+        description: 'desc',
+        category: 'Shopping',
+        original_price: 0,
+        offer_price: 999,
+        required_people: 1,
+        cover_image: 'https://x/cover.jpg',
+        business: business({
+          mobile: '9876543210',
+          city: 'Bangalore',
+          address: '123 St',
+        }),
+      });
+      prisma.offer.findUnique.mockResolvedValue(bogo);
+      prisma.offer.update.mockResolvedValue({ ...bogo, status: 'APPROVED' });
+
+      const result = await service.approveDraft('offer-1');
+
+      expect(result.status).toBe('APPROVED');
+    });
+
     it('refuses to approve an offer that is not DRAFT', async () => {
       prisma.offer.findUnique.mockResolvedValue(
         draftOffer({ status: 'APPROVED' }),

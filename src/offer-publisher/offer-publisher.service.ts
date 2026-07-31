@@ -398,7 +398,9 @@ export class OfferPublisherService {
     if (!offer.title || offer.title === 'Untitled offer') missing.push('title');
     if (!offer.description) missing.push('description');
     if (!offer.category) missing.push('category');
-    if (!offer.original_price) missing.push('originalPrice');
+    // originalPrice deliberately not required — BOGO/BOGT-style offers
+    // ("Buy 2 Get 1 Free") have no meaningful original price, only the
+    // promotional structure itself.
     if (!offer.offer_price) missing.push('offerPrice');
     if (!offer.required_people || offer.required_people < 1)
       missing.push('minParticipants');
