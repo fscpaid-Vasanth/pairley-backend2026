@@ -30,12 +30,18 @@ describe('SystemHealthService', () => {
     const storageService = {
       checkHealth: jest.fn().mockResolvedValue(storageResult),
     };
+    const notificationService = {
+      getFcmStatus: jest
+        .fn()
+        .mockResolvedValue({ mode: 'mock', credentialSource: 'none' }),
+    };
 
     return new SystemHealthService(
       health as any,
       prismaHealth as any,
       prismaService as any,
       storageService as any,
+      notificationService as any,
     );
   };
 
@@ -88,5 +94,18 @@ describe('SystemHealthService', () => {
     const result = await service.check();
 
     expect('storageError' in result).toBe(false);
+  });
+
+  it('surfaces the notifications block from NotificationService.getFcmStatus() unchanged', async () => {
+    const service = makeService({
+      databaseOk: true,
+      storageResult: { ok: true, mode: 'firebase' },
+    });
+    const result = await service.check();
+
+    expect(result.notifications).toEqual({
+      mode: 'mock',
+      credentialSource: 'none',
+    });
   });
 });

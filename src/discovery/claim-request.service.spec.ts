@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { OtpService } from '../common/services/otp.service';
 import { JwtService } from '@nestjs/jwt';
 import { StorageService } from '../common/services/storage.service';
+import { NotificationService } from '../common/services/notification.service';
 import { FileValidationService } from './file-validation.service';
 
 // A minimal real JPEG signature (FF D8 FF) followed by a few bytes — passes
@@ -17,6 +18,12 @@ const NOT_A_JPEG_BASE64 =
   'data:image/jpeg;base64,' +
   Buffer.from('this is not an image').toString('base64');
 
+// The admin-notify fire-and-forget chains (requestClaim's
+// admin.findMany().then(...)) are kicked off but never awaited by the
+// service methods themselves — flush the microtask queue before asserting
+// on notificationService calls.
+const flushPromises = () => new Promise((resolve) => setImmediate(resolve));
+
 describe('ClaimRequestService', () => {
   let businessFindUnique: jest.Mock;
   let businessUpdate: jest.Mock;
@@ -28,6 +35,7 @@ describe('ClaimRequestService', () => {
   let otpVerificationCreate: jest.Mock;
   let otpVerificationFindFirst: jest.Mock;
   let otpVerificationDeleteMany: jest.Mock;
+  let adminFindMany: jest.Mock;
   let prisma: {
     business: { findUnique: jest.Mock; update: jest.Mock };
     claimRequest: {
@@ -42,16 +50,19 @@ describe('ClaimRequestService', () => {
       findFirst: jest.Mock;
       deleteMany: jest.Mock;
     };
+    admin: { findMany: jest.Mock };
     $transaction: jest.Mock;
   };
   let otpService: { generateOtp: jest.Mock; sendOtp: jest.Mock };
   let jwtService: { sign: jest.Mock };
   let storageService: { uploadBase64: jest.Mock };
+  let notificationService: { sendNotification: jest.Mock };
   let fileValidationService: FileValidationService;
   let service: ClaimRequestService;
 
   const unclaimedBusiness = {
     id: 'business-1',
+    business_name: 'Test Shop',
     business_status: BusinessStatus.UNCLAIMED,
     mobile: null,
     email: null,
@@ -97,6 +108,9 @@ describe('ClaimRequestService', () => {
     otpVerificationCreate = jest.fn().mockResolvedValue({});
     otpVerificationFindFirst = jest.fn();
     otpVerificationDeleteMany = jest.fn().mockResolvedValue({ count: 1 });
+    adminFindMany = jest
+      .fn()
+      .mockResolvedValue([{ id: 'admin-1' }, { id: 'admin-2' }]);
 
     prisma = {
       business: { findUnique: businessFindUnique, update: businessUpdate },
@@ -112,6 +126,7 @@ describe('ClaimRequestService', () => {
         findFirst: otpVerificationFindFirst,
         deleteMany: otpVerificationDeleteMany,
       },
+      admin: { findMany: adminFindMany },
       $transaction: jest
         .fn()
         .mockImplementation((callback: (tx: unknown) => unknown) => {
@@ -142,6 +157,7 @@ describe('ClaimRequestService', () => {
     // fixtures above, same reasoning as NormalizationService in the
     // orchestration spec.
     fileValidationService = new FileValidationService();
+    notificationService = { sendNotification: jest.fn().mockResolvedValue(true) };
 
     service = new ClaimRequestService(
       prisma as unknown as PrismaService,
@@ -149,6 +165,7 @@ describe('ClaimRequestService', () => {
       jwtService as unknown as JwtService,
       storageService as unknown as StorageService,
       fileValidationService,
+      notificationService as unknown as NotificationService,
     );
   });
 
@@ -280,6 +297,35 @@ describe('ClaimRequestService', () => {
         expect(businessFindUnique).not.toHaveBeenCalled();
       });
     });
+
+    describe('admin notification', () => {
+      it('notifies every admin that a claim request needs review', async () => {
+        await service.requestClaim('business-1', '9876543210');
+        await flushPromises();
+
+        expect(adminFindMany).toHaveBeenCalled();
+        expect(notificationService.sendNotification).toHaveBeenCalledWith(
+          'admin-1',
+          'New Merchant Claim Request',
+          expect.stringContaining('Test Shop'),
+          'CLAIM_REQUEST_SUBMITTED',
+        );
+        expect(notificationService.sendNotification).toHaveBeenCalledWith(
+          'admin-2',
+          'New Merchant Claim Request',
+          expect.stringContaining('Test Shop'),
+          'CLAIM_REQUEST_SUBMITTED',
+        );
+      });
+
+      it('does not let a notification failure affect the claim response', async () => {
+        adminFindMany.mockRejectedValue(new Error('db blip'));
+        const result = await service.requestClaim('business-1', '9876543210');
+        await flushPromises();
+
+        expect(result.status).toBe(ClaimRequestStatus.PENDING_ADMIN_REVIEW);
+      });
+    });
   });
 
   describe('getRequestDetail (Module 12 Phase 1)', () => {
@@ -368,6 +414,34 @@ describe('ClaimRequestService', () => {
           rejection_reason: 'Looks fraudulent',
         }) as unknown,
       });
+    });
+
+    it('approve() notifies the claiming business', async () => {
+      claimRequestFindUnique.mockResolvedValue({
+        ...approvedClaim,
+        status: ClaimRequestStatus.PENDING_ADMIN_REVIEW,
+      });
+      await service.approve('claim-1', 'admin-42');
+      expect(notificationService.sendNotification).toHaveBeenCalledWith(
+        'business-1',
+        'Claim Approved',
+        expect.any(String),
+        'CLAIM_APPROVED',
+      );
+    });
+
+    it('reject() notifies the claiming business with the rejection reason', async () => {
+      claimRequestFindUnique.mockResolvedValue({
+        ...approvedClaim,
+        status: ClaimRequestStatus.PENDING_ADMIN_REVIEW,
+      });
+      await service.reject('claim-1', 'admin-7', 'Looks fraudulent');
+      expect(notificationService.sendNotification).toHaveBeenCalledWith(
+        'business-1',
+        'Claim Rejected',
+        expect.stringContaining('Looks fraudulent'),
+        'CLAIM_REJECTED',
+      );
     });
   });
 

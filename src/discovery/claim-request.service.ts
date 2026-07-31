@@ -11,6 +11,7 @@ import { BusinessStatus, ClaimRequestStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { OtpService } from '../common/services/otp.service';
 import { StorageService } from '../common/services/storage.service';
+import { NotificationService } from '../common/services/notification.service';
 import { FileValidationService } from './file-validation.service';
 import { FileImportError } from './file-import.errors';
 
@@ -54,6 +55,7 @@ export class ClaimRequestService {
     private readonly jwtService: JwtService,
     private readonly storageService: StorageService,
     private readonly fileValidationService: FileValidationService,
+    private readonly notificationService: NotificationService,
   ) {}
 
   async requestClaim(
@@ -154,6 +156,26 @@ export class ClaimRequestService {
     this.logger.log(
       `Claim request ${claim.id} created for business ${businessId}`,
     );
+
+    // Fire-and-forget — mirrors auth.service.ts's admin-notify pattern for
+    // new merchant registrations exactly. Never blocks or fails the
+    // claimant's request.
+    this.prisma.admin
+      .findMany({ select: { id: true } })
+      .then((admins) => {
+        admins.forEach((admin) => {
+          this.notificationService
+            .sendNotification(
+              admin.id,
+              'New Merchant Claim Request',
+              `A claim request was submitted for business "${business.business_name}" and is awaiting review.`,
+              'CLAIM_REQUEST_SUBMITTED',
+            )
+            .catch(() => {});
+        });
+      })
+      .catch(() => {});
+
     return {
       claimToken,
       status: claim.status,
@@ -218,6 +240,21 @@ export class ClaimRequestService {
     this.logger.log(
       `Claim request ${claimRequestId} approved by admin ${adminId}`,
     );
+
+    // Fire-and-forget. The claiming business has no session/push token yet
+    // at this point (ownership transfer, and thus login, only happens
+    // after OTP verification) — the Notification row is still created and
+    // will surface via GET /notifications once they do log in, same as
+    // other pre-login business notifications elsewhere in this codebase.
+    this.notificationService
+      .sendNotification(
+        updated.business_id,
+        'Claim Approved',
+        'Your claim request was approved. Verify your mobile number to complete ownership transfer.',
+        'CLAIM_APPROVED',
+      )
+      .catch(() => {});
+
     return updated;
   }
 
@@ -245,6 +282,18 @@ export class ClaimRequestService {
     this.logger.log(
       `Claim request ${claimRequestId} rejected by admin ${adminId}${reason ? `: ${reason}` : ''}`,
     );
+
+    this.notificationService
+      .sendNotification(
+        updated.business_id,
+        'Claim Rejected',
+        reason
+          ? `Your claim request was rejected: ${reason}`
+          : 'Your claim request was rejected.',
+        'CLAIM_REJECTED',
+      )
+      .catch(() => {});
+
     return updated;
   }
 

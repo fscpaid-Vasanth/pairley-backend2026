@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { HealthCheckService, PrismaHealthIndicator } from '@nestjs/terminus';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StorageService } from './storage.service';
+import { NotificationService } from './notification.service';
 import { getRelease } from '../utils/release.util';
 
 export interface SystemHealthResult {
@@ -17,6 +18,15 @@ export interface SystemHealthResult {
   // don't need to change.
   storageProvider: 'mock' | 's3' | 'firebase';
   storageError?: string;
+  // FCM rollout — lets an operator confirm, without digging through Render
+  // logs, whether push is live or mocked, where the credential is being
+  // read from, and which Firebase project it targets. Side-effect-free:
+  // NotificationService.getFcmStatus() never sends anything.
+  notifications: {
+    mode: 'mock' | 'live';
+    credentialSource: 'env' | 'file' | 'none';
+    projectId?: string;
+  };
   release: string;
   environment: string;
   serverTime: string;
@@ -34,6 +44,7 @@ export class SystemHealthService {
     private readonly prismaHealth: PrismaHealthIndicator,
     private readonly prismaService: PrismaService,
     private readonly storageService: StorageService,
+    private readonly notificationService: NotificationService,
   ) {}
 
   async check(): Promise<SystemHealthResult> {
@@ -52,6 +63,7 @@ export class SystemHealthService {
     }
 
     const storageResult = await this.storageService.checkHealth();
+    const notifications = await this.notificationService.getFcmStatus();
 
     return {
       status: !databaseOk ? 'down' : storageResult.ok ? 'ok' : 'degraded',
@@ -61,6 +73,7 @@ export class SystemHealthService {
       },
       storageProvider: storageResult.mode,
       ...(storageResult.error ? { storageError: storageResult.error } : {}),
+      notifications,
       release,
       environment,
       serverTime,
