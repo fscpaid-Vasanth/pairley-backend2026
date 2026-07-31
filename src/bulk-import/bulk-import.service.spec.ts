@@ -106,8 +106,9 @@ describe('BulkImportService', () => {
       findMany: jest.Mock;
       count: jest.Mock;
     };
+    bulkImportImage: { groupBy: jest.Mock };
     business: { findMany: jest.Mock; create: jest.Mock };
-    offer: { create: jest.Mock; update: jest.Mock };
+    offer: { create: jest.Mock; update: jest.Mock; findMany: jest.Mock };
     $transaction: jest.Mock;
   };
   let storage: { uploadFile: jest.Mock };
@@ -140,11 +141,16 @@ describe('BulkImportService', () => {
         findMany: jest.fn().mockResolvedValue([]),
         count: jest.fn().mockResolvedValue(0),
       },
+      bulkImportImage: { groupBy: jest.fn().mockResolvedValue([]) },
       business: {
         findMany: jest.fn().mockResolvedValue([]),
         create: jest.fn(),
       },
-      offer: { create: jest.fn(), update: jest.fn() },
+      offer: {
+        create: jest.fn(),
+        update: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
       $transaction: jest
         .fn()
         .mockImplementation((callback: (tx: unknown) => unknown) => {
@@ -239,6 +245,105 @@ describe('BulkImportService', () => {
       await service.createBatch(csvFile([HEADERS, VALID_ROW]), 'admin-1');
       const inserted = prisma.bulkImportRow.createMany.mock.calls[0][0].data;
       expect(inserted[0].matched_business_id).toBeNull();
+    });
+  });
+
+  describe('getBatchOffers', () => {
+    const seedBatch = () =>
+      prisma.bulkImportBatch.findUnique.mockResolvedValue({
+        id: 'batch-1',
+        status: 'CREATED',
+      });
+
+    it('splits the image outcomes an admin has to act on differently', async () => {
+      seedBatch();
+      prisma.bulkImportImage.groupBy.mockResolvedValue([
+        { status: 'MAPPED', _count: { _all: 7 } },
+        { status: 'MISSING_OFFER', _count: { _all: 2 } },
+        { status: 'DUPLICATE', _count: { _all: 3 } },
+        { status: 'INVALID_FILE', _count: { _all: 1 } },
+      ]);
+      const result = await service.getBatchOffers('batch-1');
+      expect(result.imageStats).toEqual({
+        uploaded: 13,
+        matched: 7,
+        missingOffer: 2,
+        duplicate: 3,
+        invalidFile: 1,
+        failed: 0,
+      });
+    });
+
+    // The reason offersWithoutImages is counted from the offers side: one
+    // offer can hold many gallery images, so a "matched images" count never
+    // tells you how many offers actually got covered.
+    it('counts offers lacking a hero image rather than inferring it from image counts', async () => {
+      seedBatch();
+      prisma.bulkImportRow.findMany.mockResolvedValue([
+        { row_no: 1, created_offer_id: 'o1' },
+        { row_no: 2, created_offer_id: 'o2' },
+        { row_no: 3, created_offer_id: 'o3' },
+      ]);
+      prisma.bulkImportImage.groupBy.mockResolvedValue([
+        { status: 'MAPPED', _count: { _all: 6 } },
+      ]);
+      prisma.offer.findMany.mockResolvedValue([
+        {
+          id: 'o1',
+          offer_code: 1,
+          title: 'A',
+          status: 'DRAFT',
+          cover_image: 'https://s3/a.jpg',
+          gallery_images: ['https://s3/a1.jpg', 'https://s3/a2.jpg'],
+          business: { business_name: 'Shop A' },
+        },
+        {
+          id: 'o2',
+          offer_code: 2,
+          title: 'B',
+          status: 'DRAFT',
+          cover_image: null,
+          gallery_images: [],
+          business: { business_name: 'Shop B' },
+        },
+        {
+          id: 'o3',
+          offer_code: 3,
+          title: 'C',
+          status: 'DRAFT',
+          cover_image: null,
+          gallery_images: [],
+          business: null,
+        },
+      ]);
+
+      const result = await service.getBatchOffers('batch-1');
+      expect(result.offersWithoutImages).toBe(2);
+      expect(result.offers).toHaveLength(3);
+      expect(result.offers[0]).toEqual({
+        id: 'o1',
+        offer_code: 1,
+        title: 'A',
+        status: 'DRAFT',
+        merchant: 'Shop A',
+        cover_image: 'https://s3/a.jpg',
+        gallery_images: ['https://s3/a1.jpg', 'https://s3/a2.jpg'],
+      });
+      expect(result.offers[2].merchant).toBeNull();
+    });
+
+    it('never queries offers when the batch created none', async () => {
+      seedBatch();
+      prisma.bulkImportRow.findMany.mockResolvedValue([]);
+      const result = await service.getBatchOffers('batch-1');
+      expect(prisma.offer.findMany).not.toHaveBeenCalled();
+      expect(result.offers).toEqual([]);
+      expect(result.offersWithoutImages).toBe(0);
+    });
+
+    it('rejects an unknown batch', async () => {
+      prisma.bulkImportBatch.findUnique.mockResolvedValue(null);
+      await expect(service.getBatchOffers('nope')).rejects.toThrow();
     });
   });
 

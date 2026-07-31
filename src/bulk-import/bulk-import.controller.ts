@@ -62,6 +62,13 @@ export class BulkImportController {
     return this.bulkImportService.getErrorRows(id);
   }
 
+  // Backs the image-stage report and the pre-publish preview: per-status
+  // image counts plus each created offer with its hero/gallery images.
+  @Get(':id/offers')
+  getBatchOffers(@Param('id') id: string) {
+    return this.bulkImportService.getBatchOffers(id);
+  }
+
   @Post()
   @UseInterceptors(
     FileInterceptor('file', { limits: { fileSize: SHEET_UPLOAD_LIMIT_BYTES } }),

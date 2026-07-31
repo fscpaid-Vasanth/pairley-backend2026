@@ -5,6 +5,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import {
+  BulkImageStatus,
   BusinessStatus,
   Prisma,
   Source,
@@ -241,6 +242,83 @@ export class BulkImportService {
       select: { row_no: true, raw_data: true, status: true, errors: true },
       orderBy: { row_no: 'asc' },
     });
+  }
+
+  /**
+   * Everything the image stage needs to report on itself, and everything the
+   * pre-publish preview needs to render: the per-status image breakdown plus
+   * each created offer with its resolved hero and gallery images.
+   *
+   * `BulkImportBatch` already counts total/mapped/failed images, but "failed"
+   * collapses three outcomes an admin must act on differently — a file whose
+   * code matches no offer in this batch (wrong sheet, or a typo'd filename),
+   * a file targeting a slot that's already filled, and a file that isn't a
+   * usable image at all. They're split out here rather than derived in the
+   * UI so the counts can't drift between callers.
+   *
+   * `offersWithoutImages` is deliberately computed from the offers side, not
+   * as (rows - mapped): an offer can hold several gallery images, so image
+   * counts never imply how many offers were covered.
+   */
+  async getBatchOffers(batchId: string) {
+    await this.getBatch(batchId);
+
+    const [imageCounts, rows] = await Promise.all([
+      this.prisma.bulkImportImage.groupBy({
+        by: ['status'],
+        where: { batch_id: batchId },
+        _count: { _all: true },
+      }),
+      this.prisma.bulkImportRow.findMany({
+        where: { batch_id: batchId, created_offer_id: { not: null } },
+        select: { row_no: true, created_offer_id: true },
+        orderBy: { row_no: 'asc' },
+      }),
+    ]);
+
+    const countFor = (status: BulkImageStatus) =>
+      imageCounts.find((c) => c.status === status)?._count._all ?? 0;
+
+    const offerIds = rows
+      .map((r) => r.created_offer_id)
+      .filter((id): id is string => Boolean(id));
+
+    const offers = offerIds.length
+      ? await this.prisma.offer.findMany({
+          where: { id: { in: offerIds } },
+          select: {
+            id: true,
+            offer_code: true,
+            title: true,
+            status: true,
+            cover_image: true,
+            gallery_images: true,
+            business: { select: { business_name: true } },
+          },
+          orderBy: { offer_code: 'asc' },
+        })
+      : [];
+
+    return {
+      imageStats: {
+        uploaded: imageCounts.reduce((sum, c) => sum + c._count._all, 0),
+        matched: countFor(BulkImageStatus.MAPPED),
+        missingOffer: countFor(BulkImageStatus.MISSING_OFFER),
+        duplicate: countFor(BulkImageStatus.DUPLICATE),
+        invalidFile: countFor(BulkImageStatus.INVALID_FILE),
+        failed: countFor(BulkImageStatus.FAILED),
+      },
+      offersWithoutImages: offers.filter((o) => !o.cover_image).length,
+      offers: offers.map((o) => ({
+        id: o.id,
+        offer_code: o.offer_code,
+        title: o.title,
+        status: o.status,
+        merchant: o.business?.business_name ?? null,
+        cover_image: o.cover_image,
+        gallery_images: o.gallery_images ?? [],
+      })),
+    };
   }
 
   async listHistory() {
