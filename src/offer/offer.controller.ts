@@ -14,6 +14,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
+import { LeadSource } from '@prisma/client';
 import { OfferService } from './offer.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '../common/guards/optional-jwt-auth.guard';
@@ -183,6 +184,14 @@ class InterestDto {
   @IsString()
   @IsNotEmpty()
   offerId: string;
+
+  // Lead-generation revision — which client sent this "Show Interest"
+  // click, for the admin lead dashboard. Optional: an unrecognised or
+  // missing value defaults to WEBSITE in the service layer, never rejects
+  // the interest itself over this.
+  @IsOptional()
+  @IsIn(['WEBSITE', 'MOBILE_APP'])
+  source?: string;
 }
 
 @Controller('offers')
@@ -351,7 +360,11 @@ export class OfferController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.CUSTOMER)
   async createLead(@CurrentUser() user: any, @Body() body: InterestDto) {
-    return this.offerService.createLead(user.sub, body.offerId);
+    return this.offerService.createLead(
+      user.sub,
+      body.offerId,
+      body.source as LeadSource | undefined,
+    );
   }
 
   @Post('ready-to-buy')

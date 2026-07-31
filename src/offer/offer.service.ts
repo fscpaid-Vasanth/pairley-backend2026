@@ -4,12 +4,14 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   PUBLIC_OFFER_FIELDS,
   OWNER_ONLY_OFFER_FIELDS,
   PUBLIC_BUSINESS_SELECT,
   resolveContactAccess,
+  resolveLeadFollowupMode,
   buildBusinessSelect,
   decorateBusinessContact,
 } from './offerVisibility';
@@ -27,6 +29,7 @@ import {
   SubscriptionStatus,
   VerificationStatus,
   LeadStatus,
+  LeadSource,
   BusinessStatus,
 } from '@prisma/client';
 
@@ -94,6 +97,7 @@ export class OfferService {
     private otpService: OtpService,
     private storageService: StorageService,
     private whatsappService: WhatsappService,
+    private configService: ConfigService,
   ) {}
 
   async createOffer(businessId: string, data: any) {
@@ -654,10 +658,16 @@ export class OfferService {
       }
     }
 
-    // Module 14 Phase 3A — merchant contact visibility. Anonymous callers
-    // never receive it; an unclaimed business's details are its own
-    // published information, so Pairley points at the merchant's own site
-    // rather than positioning itself as the gatekeeper to them.
+    // Module 14 Phase 3A / lead-generation revision — merchant contact
+    // visibility is configurable platform-wide via LEAD_FOLLOWUP_MODE (see
+    // offerVisibility.ts's module docstring). ADMIN_MANAGED (the default)
+    // never hands contact to a customer; MERCHANT_MANAGED restores
+    // interest-gated direct reveal for CLAIMED businesses. myLead, computed
+    // just above, is exactly the "expressed interest" signal
+    // MERCHANT_MANAGED mode needs, already scoped to this viewer and offer.
+    const leadFollowupMode = resolveLeadFollowupMode(
+      this.configService.get<string>('LEAD_FOLLOWUP_MODE'),
+    );
     const contactAccess = resolveContactAccess(
       {
         userId: requestingUserId,
@@ -665,6 +675,8 @@ export class OfferService {
         ownerBusinessId: offer.business_id,
       },
       offer.business,
+      !!myLead,
+      leadFollowupMode,
     );
 
     let businessPayload: Record<string, unknown> | null = offer.business
@@ -1090,7 +1102,11 @@ export class OfferService {
     });
   }
 
-  async createLead(customerId: string, offerId: string) {
+  async createLead(
+    customerId: string,
+    offerId: string,
+    source: LeadSource = LeadSource.WEBSITE,
+  ) {
     const offer = await this.prisma.offer.findUnique({
       where: { id: offerId },
       include: { business: true },
@@ -1140,6 +1156,7 @@ export class OfferService {
         shop_id: offer.business_id,
         shop_name: offer.business.business_name,
         status: LeadStatus.NEW,
+        source,
       },
     });
 

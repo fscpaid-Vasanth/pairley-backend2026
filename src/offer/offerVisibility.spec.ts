@@ -5,6 +5,7 @@ import {
   PUBLIC_BUSINESS_SELECT,
   CONTACT_BUSINESS_SELECT,
   resolveContactAccess,
+  resolveLeadFollowupMode,
   buildBusinessSelect,
   decorateBusinessContact,
   isOwner,
@@ -95,9 +96,9 @@ describe('offerVisibility (Module 14 Phase 3A — contact protection)', () => {
       expect(keys).not.toContain('pincode');
     });
 
-    // The merchant's own front door is public information and is what the
-    // USE_OFFICIAL_WEBSITE notice points a customer at.
-    it('keeps website public so an unclaimed merchant stays reachable on their own terms', () => {
+    // The merchant's own front door is public information, independent of
+    // the contact-reveal policy — a customer can always find it.
+    it('keeps website public so a merchant stays reachable on their own terms', () => {
       expect(Object.keys(PUBLIC_BUSINESS_SELECT)).toContain('website');
     });
 
@@ -109,65 +110,147 @@ describe('offerVisibility (Module 14 Phase 3A — contact protection)', () => {
     });
   });
 
+  describe('resolveLeadFollowupMode', () => {
+    it('defaults to ADMIN_MANAGED for an unset value', () => {
+      expect(resolveLeadFollowupMode(undefined)).toBe('ADMIN_MANAGED');
+      expect(resolveLeadFollowupMode(null)).toBe('ADMIN_MANAGED');
+      expect(resolveLeadFollowupMode('')).toBe('ADMIN_MANAGED');
+    });
+
+    it('accepts MERCHANT_MANAGED explicitly', () => {
+      expect(resolveLeadFollowupMode('MERCHANT_MANAGED')).toBe(
+        'MERCHANT_MANAGED',
+      );
+    });
+
+    // A typo'd env var must degrade to the safer (no-reveal) default, not
+    // throw and not silently do the more permissive thing.
+    it('degrades an unrecognised value to ADMIN_MANAGED rather than throwing', () => {
+      expect(resolveLeadFollowupMode('merchant_managed')).toBe('ADMIN_MANAGED');
+      expect(resolveLeadFollowupMode('SOMETHING_ELSE')).toBe('ADMIN_MANAGED');
+    });
+  });
+
   describe('resolveContactAccess', () => {
-    it('refuses an anonymous caller — the gap this phase closes', () => {
-      expect(resolveContactAccess(ANON, CLAIMED)).toEqual({
+    it('refuses an anonymous caller in either mode', () => {
+      expect(
+        resolveContactAccess(ANON, CLAIMED, true, 'ADMIN_MANAGED'),
+      ).toEqual({
+        canSeeContact: false,
+        notice: 'SIGN_UP_REQUIRED',
+      });
+      expect(
+        resolveContactAccess(ANON, CLAIMED, true, 'MERCHANT_MANAGED'),
+      ).toEqual({
         canSeeContact: false,
         notice: 'SIGN_UP_REQUIRED',
       });
     });
 
-    it('refuses an anonymous caller on an unclaimed business too', () => {
-      expect(resolveContactAccess(ANON, UNCLAIMED).canSeeContact).toBe(false);
+    it('allows the owning business and an admin regardless of mode', () => {
+      expect(
+        resolveContactAccess(OWNER, UNCLAIMED, false, 'ADMIN_MANAGED')
+          .canSeeContact,
+      ).toBe(true);
+      expect(
+        resolveContactAccess(OWNER, UNCLAIMED, false, 'MERCHANT_MANAGED')
+          .canSeeContact,
+      ).toBe(true);
+      expect(
+        resolveContactAccess(ADMIN, UNCLAIMED, false, 'ADMIN_MANAGED')
+          .canSeeContact,
+      ).toBe(true);
     });
 
-    it('allows an authenticated customer on a claimed business', () => {
-      expect(resolveContactAccess(CUSTOMER, CLAIMED)).toEqual({
-        canSeeContact: true,
-        notice: 'AVAILABLE',
-      });
+    // A logged-in business account is not special-cased — on a listing it
+    // doesn't own, it's treated exactly like any other authenticated
+    // non-owner, refused here because the business isn't CLAIMED (not
+    // because of who's asking).
+    it('refuses a different business viewing an unclaimed listing, same as any customer', () => {
+      expect(
+        resolveContactAccess(
+          OTHER_BUSINESS,
+          UNCLAIMED,
+          true,
+          'MERCHANT_MANAGED',
+        ).canSeeContact,
+      ).toBe(false);
     });
 
-    // Pairley shouldn't present itself as the gatekeeper to a number the
-    // merchant publishes themselves and never agreed to route through us.
-    it('refuses contact for an unclaimed business, pointing at their own site', () => {
-      expect(resolveContactAccess(CUSTOMER, UNCLAIMED)).toEqual({
+    it('defaults to ADMIN_MANAGED when no mode is given', () => {
+      expect(resolveContactAccess(CUSTOMER, CLAIMED, true)).toEqual({
         canSeeContact: false,
-        notice: 'USE_OFFICIAL_WEBSITE',
+        notice: 'NOT_SHARED',
       });
     });
 
-    it('allows the owning business', () => {
-      expect(resolveContactAccess(OWNER, UNCLAIMED).canSeeContact).toBe(true);
-      expect(resolveContactAccess(OWNER, CLAIMED).canSeeContact).toBe(true);
+    describe('ADMIN_MANAGED mode (Diwali launch default)', () => {
+      // The whole point of this mode: Pairley captures the lead and the
+      // admin/merchant follow up manually — contact is never handed to a
+      // customer through this endpoint, regardless of business status or
+      // expressed interest.
+      it('never shares contact with a signed-in customer, on any business status or interest state', () => {
+        expect(
+          resolveContactAccess(CUSTOMER, CLAIMED, true, 'ADMIN_MANAGED'),
+        ).toEqual({
+          canSeeContact: false,
+          notice: 'NOT_SHARED',
+        });
+        expect(
+          resolveContactAccess(CUSTOMER, UNCLAIMED, false, 'ADMIN_MANAGED'),
+        ).toEqual({
+          canSeeContact: false,
+          notice: 'NOT_SHARED',
+        });
+      });
     });
 
-    it('allows an admin regardless of claim status', () => {
-      expect(resolveContactAccess(ADMIN, UNCLAIMED).canSeeContact).toBe(true);
-    });
+    describe('MERCHANT_MANAGED mode (future, disabled by default)', () => {
+      it('allows a signed-in customer on a CLAIMED business who has expressed interest', () => {
+        expect(
+          resolveContactAccess(CUSTOMER, CLAIMED, true, 'MERCHANT_MANAGED'),
+        ).toEqual({
+          canSeeContact: true,
+          notice: 'AVAILABLE',
+        });
+      });
 
-    // A logged-in merchant is not entitled to a competitor's contact details
-    // just for being authenticated.
-    it('refuses a different business viewing someone else’s unclaimed listing', () => {
-      expect(
-        resolveContactAccess(OTHER_BUSINESS, UNCLAIMED).canSeeContact,
-      ).toBe(false);
-    });
+      it('withholds contact from a CLAIMED business until interest is expressed', () => {
+        expect(
+          resolveContactAccess(CUSTOMER, CLAIMED, false, 'MERCHANT_MANAGED'),
+        ).toEqual({
+          canSeeContact: false,
+          notice: 'SHOW_INTEREST_REQUIRED',
+        });
+      });
 
-    it('treats a missing/unknown business as not claimed', () => {
-      expect(resolveContactAccess(CUSTOMER, null).canSeeContact).toBe(false);
-      expect(resolveContactAccess(CUSTOMER, {}).canSeeContact).toBe(false);
-      expect(
-        resolveContactAccess(CUSTOMER, { business_status: null }).canSeeContact,
-      ).toBe(false);
-    });
+      // Nobody has verified there's a real owner able to receive the call —
+      // this holds regardless of interest.
+      it('refuses contact for an UNCLAIMED business regardless of interest, pointing at their own site', () => {
+        expect(
+          resolveContactAccess(CUSTOMER, UNCLAIMED, false, 'MERCHANT_MANAGED'),
+        ).toEqual({
+          canSeeContact: false,
+          notice: 'USE_OFFICIAL_WEBSITE',
+        });
+        expect(
+          resolveContactAccess(CUSTOMER, UNCLAIMED, true, 'MERCHANT_MANAGED'),
+        ).toEqual({
+          canSeeContact: false,
+          notice: 'USE_OFFICIAL_WEBSITE',
+        });
+      });
 
-    it('does not treat a REMOVED business as claimed', () => {
-      expect(
-        resolveContactAccess(CUSTOMER, {
-          business_status: BusinessStatus.REMOVED,
-        }).canSeeContact,
-      ).toBe(false);
+      it('treats a missing/unknown business as not claimed', () => {
+        expect(
+          resolveContactAccess(CUSTOMER, null, true, 'MERCHANT_MANAGED')
+            .canSeeContact,
+        ).toBe(false);
+        expect(
+          resolveContactAccess(CUSTOMER, {}, true, 'MERCHANT_MANAGED')
+            .canSeeContact,
+        ).toBe(false);
+      });
     });
   });
 

@@ -180,6 +180,36 @@ export class DashboardService {
     });
   }
 
+  // Lead-generation revision (bulk offer import launch) — the admin-facing
+  // lead management list: every customer who has shown interest in any
+  // offer, platform-wide, not scoped to one merchant. Lead already
+  // denormalizes customer_name/customer_mobile/offer_name/shop_name onto
+  // the row itself (see the Lead model in schema.prisma), so this is a
+  // straight list — no join needed for the fields the admin wants to see.
+  async listLeads(status?: string) {
+    const where: Record<string, unknown> = {};
+    if (status) {
+      where.status = status;
+    }
+    return this.prisma.lead.findMany({
+      where,
+      select: {
+        id: true,
+        customer_id: true,
+        customer_name: true,
+        customer_mobile: true,
+        offer_id: true,
+        offer_name: true,
+        shop_id: true,
+        shop_name: true,
+        status: true,
+        source: true,
+        created_at: true,
+      },
+      orderBy: { created_at: 'desc' },
+    });
+  }
+
   // Offer moderation
   async moderateOffer(offerId: string, status: string) {
     const offer = await this.prisma.offer.findUnique({

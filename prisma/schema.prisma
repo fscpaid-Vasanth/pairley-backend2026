@@ -76,6 +76,18 @@ enum LeadStatus {
   NOT_INTERESTED
 }
 
+// Lead-generation revision — which client the "Show Interest" click came
+// from, so the admin lead dashboard can tell them apart. WEBSITE is the
+// default (existing behavior, and the only client that existed before this
+// enum); MOBILE_APP is set only by the Capacitor-wrapped native build,
+// which can genuinely tell (Capacitor.isNativePlatform()), unlike a plain
+// browser User-Agent check, which is trivially spoofable and was never a
+// serious option.
+enum LeadSource {
+  WEBSITE
+  MOBILE_APP
+}
+
 enum SupportStatus {
   OPEN
   IN_PROGRESS
@@ -86,19 +98,30 @@ enum SupportStatus {
 // Claim/ownership lifecycle for a Business record — orthogonal to
 // VerificationStatus (which tracks admin KYC approval). A normal, self-
 // registered merchant is CLAIMED from creation (they proved phone/Google
-// ownership at signup). UNCLAIMED is reserved for future AI-imported
-// businesses (Pairley 2.0) that exist with no owner yet.
+// ownership at signup). UNCLAIMED is a business with no owner and no admin
+// vouching for it. ADMIN_CURATED is also ownerless, but the admin created
+// the record directly (bulk import) rather than it surfacing from
+// discovery — so, unlike UNCLAIMED, it behaves like CLAIMED for every
+// customer-facing purpose (offers visible, contact reveals after interest;
+// see offerVisibility.ts's resolveContactAccess). Claiming only ever
+// changes ownership/dashboard access, never customer-facing visibility —
+// see claim-request.service.ts, which accepts a claim from either
+// UNCLAIMED or ADMIN_CURATED and always lands on CLAIMED.
 enum BusinessStatus {
   UNCLAIMED
+  ADMIN_CURATED
   CLAIMED
   VERIFIED
   SUSPENDED
   REMOVED
 }
 
-// How a Business or Offer record originated. MANUAL covers today's
-// self-service signup/offer-creation flows; the rest are reserved for
-// Pairley 2.0's AI discovery pipeline and are not populated by any code yet.
+// How a Business or Offer record originated. MANUAL covers self-service
+// signup/offer-creation flows. WEBSITE/INSTAGRAM/FACEBOOK/GOOGLE/PDF/POSTER
+// were populated by the AI Discovery Tool (Modules 9-11, 14), removed for
+// the bulk-offer-import pivot — existing rows keep whatever value they were
+// written with, but nothing writes these going forward. ADMIN is reserved
+// for the upcoming Bulk Offer Import feature.
 enum Source {
   MANUAL
   WEBSITE
@@ -131,22 +154,13 @@ enum BannerBrandingMode {
   MERCHANT
 }
 
-// Module 9 — AI Offer Discovery (Group B) foundation. Tracks one import
-// attempt end to end (currently WEBSITE only; the Source enum's other
-// values are reserved for later modules).
-enum ImportJobStatus {
-  QUEUED
-  PROCESSING
-  DONE
-  FAILED
-}
-
 // Module 11 — AI Offer Standardization & Enrichment. Tracks an Offer's
-// enrichment lifecycle, separate from ImportJobStatus (which tracks the
-// import/extraction job itself, not what happens to the resulting offer
-// afterward). NOT_ENRICHED is the default for every offer today, including
-// all pre-Module-11 rows and every MANUAL (merchant self-service) offer,
-// which is never a candidate for enrichment.
+// enrichment lifecycle. Orphaned by the AI Discovery Tool removal — no code
+// writes a new value anymore — kept rather than dropped since it's a plain,
+// harmless historical field on existing rows (see Offer.enrichment_status).
+// NOT_ENRICHED is the default for every offer, including every MANUAL
+// (merchant self-service) offer, which was never a candidate for
+// enrichment to begin with.
 enum EnrichmentStatus {
   NOT_ENRICHED
   PENDING
@@ -383,6 +397,16 @@ model Offer {
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
 
+  // Bulk Offer Import — a short, human-typeable identifier every offer gets
+  // (Postgres-native autoincrement, not just bulk-imported ones — simplest
+  // to give every row one rather than conditionally assigning it). Purpose:
+  // Bulk Image Upload matches uploaded files to offers by this number in
+  // the filename (OFF000123.jpg), because asking an admin to name image
+  // files after a UUID is unworkable. Display format is presentation-only
+  // ('OFF' + zero-padded 6 digits) — the column itself stores the bare int
+  // so matching logic (parse "OFF000123" -> 123) stays a trivial lookup.
+  offer_code Int @unique @default(autoincrement())
+
   business  Business        @relation(fields: [business_id], references: [id], onDelete: Cascade)
   interests OfferInterest[]
   saved_by  SavedOffer[]
@@ -532,6 +556,7 @@ model Lead {
   // updating it on every write going forward.
   updated_at      DateTime   @default(now()) @updatedAt
   status          LeadStatus @default(NEW)
+  source          LeadSource @default(WEBSITE)
 
   // Module 13 — WhatsApp-free interest flow. Null = merchant hasn't
   // unlocked this lead's contact details yet; set once, on the merchant's
@@ -654,29 +679,6 @@ model WhatsAppMessage {
   @@map("whatsapp_messages")
 }
 
-// Module 9 Phase 1 — AI Offer Discovery (Group B) repository foundation.
-// One row per import attempt. Standalone/no @relation fields (same
-// precedent as WhatsAppMessage above): a job's history must survive even if
-// the Business/Offer it eventually produces is later deleted, and a failed
-// job may never produce either. created_business_id/created_offer_id are
-// populated once Phase 2+ actually create those rows — Phase 1 only
-// establishes the table.
-model ImportJob {
-  id                  String          @id @default(uuid())
-  source_type         Source          @default(WEBSITE)
-  source_url          String
-  status              ImportJobStatus @default(QUEUED)
-  error               String?
-  extracted_fields    Json?
-  created_business_id String?
-  created_offer_id    String?
-  created_at          DateTime        @default(now())
-  updated_at          DateTime        @updatedAt
-
-  @@index([status, created_at])
-  @@map("import_jobs")
-}
-
 // Module 9 Phase 4 — admin-assisted merchant claim flow for UNCLAIMED
 // (AI-imported) businesses. PENDING_ADMIN_REVIEW -> ADMIN_APPROVED ->
 // COMPLETED is the happy path; ADMIN_REJECTED and EXPIRED are terminal
@@ -723,4 +725,142 @@ model ClaimRequest {
 
   @@index([business_id, status])
   @@map("claim_requests")
+}
+
+// Bulk Offer Import — the Diwali-launch replacement for the AI Discovery
+// Tool (Modules 9-11, 14, removed): offers are authored externally
+// (ChatGPT/manual curation), uploaded as a spreadsheet, and published in
+// bulk, with a separate Bulk Image Upload step matching image files to
+// offers by Offer.offer_code. Absorbs what MODULE15_MERCHANT_OFFER_VALIDATION.md
+// scoped (pricing-mode sanity checks, participant/discount validation) —
+// that doc's concerns are now this feature's validation layer, not a
+// separate future module.
+// The batch moves through validation and offer-creation as two distinct,
+// admin-triggered stages — not one "publish" — because images are attached
+// to already-created DRAFT offers, before anything goes live. CREATING /
+// CREATED cover "give every valid row a DRAFT business+offer and an
+// offer_code"; PUBLISHING / COMPLETED cover the later, separate action that
+// flips those DRAFT offers to ACTIVE once images are mapped and previewed.
+enum BulkImportStatus {
+  QUEUED
+  VALIDATING
+  VALIDATED
+  CREATING
+  CREATED
+  PUBLISHING
+  COMPLETED
+  FAILED
+}
+
+// PENDING -> VALID/INVALID/DUPLICATE (validation) -> CREATED (a DRAFT
+// business+offer exists) -> PUBLISHED (offer flipped to ACTIVE) is the happy
+// path; FAILED covers a row that was VALID but errored during create/publish
+// (e.g. a transient DB error) — distinct from INVALID (never had a chance)
+// so a retry only reprocesses rows that are actually retryable.
+enum BulkImportRowStatus {
+  PENDING
+  VALID
+  INVALID
+  DUPLICATE
+  CREATED
+  PUBLISHED
+  FAILED
+}
+
+// One row per image FILE inside an uploaded ZIP/multi-select — a different
+// granularity from BulkImportRow, since one offer can have several image
+// files. MISSING_OFFER: the parsed code matched no offer in this batch.
+// DUPLICATE: that offer's slot (hero, or a given gallery position) was
+// already filled by an earlier file in the same upload. INVALID_FILE: the
+// filename didn't match the OFF<code>[_N].<ext> pattern at all.
+enum BulkImageStatus {
+  PENDING
+  MAPPED
+  MISSING_OFFER
+  DUPLICATE
+  INVALID_FILE
+  UPLOADED
+  FAILED
+}
+
+// One row per uploaded file (Excel/CSV offer sheet, or ZIP/multi-file image
+// upload — the same batch record tracks both stages of one import, since an
+// admin uploads offers first and images second against the same import).
+// The total_*/valid_*/mapped_* counters are denormalized on purpose: they're
+// what the Import History list and the Preview screen read, and recomputing
+// them from BulkImportRow/BulkImportImage on every list-view render doesn't
+// scale to 10,000+ rows. BulkImportScheduler is the only writer of these
+// counts, incrementing them as it processes each row/image — never derived
+// by a COUNT(*) query at read time.
+model BulkImportBatch {
+  id             String            @id @default(uuid())
+  file_name      String
+  file_url       String
+  uploaded_by    String
+  status         BulkImportStatus  @default(QUEUED)
+  total_rows     Int               @default(0)
+  valid_rows     Int               @default(0)
+  invalid_rows   Int               @default(0)
+  duplicate_rows Int               @default(0)
+  created_rows   Int               @default(0) // VALID rows that now have a DRAFT business+offer — the CREATING-phase progress counter
+  published_rows Int               @default(0)
+  total_images   Int               @default(0)
+  mapped_images  Int               @default(0)
+  failed_images  Int               @default(0)
+  error          String?
+  started_at     DateTime?
+  completed_at   DateTime?
+  created_at     DateTime          @default(now())
+  updated_at     DateTime          @updatedAt
+
+  rows   BulkImportRow[]
+  images BulkImportImage[]
+
+  @@map("bulk_import_batches")
+}
+
+model BulkImportRow {
+  id                   String              @id @default(uuid())
+  batch_id             String
+  row_no               Int
+  raw_data             Json // the original row, for the downloadable error report
+  // The validated, typed form of a VALID/DUPLICATE row — computed once by
+  // validateBulkOfferRow() during createBatch() and never recomputed.
+  // Draft-creation and publish both read this rather than re-validating
+  // raw_data, so a row's outcome can't silently diverge from what the
+  // admin saw in Preview.
+  normalized           Json?
+  status               BulkImportRowStatus @default(PENDING)
+  errors               String[]            @default([])
+  // Non-blocking flags on an otherwise VALID row (e.g. an unusually steep
+  // discount) — kept separate from errors so the Preview screen can show
+  // "ready to publish, but take a look at this" distinctly from "blocked".
+  warnings             String[]            @default([])
+  matched_business_id  String?
+  created_offer_id     String?
+  created_at           DateTime            @default(now())
+  updated_at           DateTime            @updatedAt
+
+  batch BulkImportBatch @relation(fields: [batch_id], references: [id], onDelete: Cascade)
+
+  @@index([batch_id, status])
+  @@map("bulk_import_rows")
+}
+
+model BulkImportImage {
+  id               String          @id @default(uuid())
+  batch_id         String
+  file_name        String
+  parsed_code      Int? // the numeric part of OFF000123.jpg — null if the filename didn't parse
+  slot             Int? // 0 = hero, 1+ = gallery order — null for INVALID_FILE/MISSING_OFFER, which never resolve to a real slot
+  matched_offer_id String?
+  status           BulkImageStatus @default(PENDING)
+  error            String?
+  created_at       DateTime        @default(now())
+  updated_at       DateTime        @updatedAt
+
+  batch BulkImportBatch @relation(fields: [batch_id], references: [id], onDelete: Cascade)
+
+  @@index([batch_id, status])
+  @@map("bulk_import_images")
 }

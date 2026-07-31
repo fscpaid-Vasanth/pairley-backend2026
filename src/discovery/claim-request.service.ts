@@ -26,6 +26,12 @@ const MAX_EVIDENCE_FILES = 5;
 const EVIDENCE_UPLOAD_FOLDER = 'claim-evidence';
 const DATA_URI_PATTERN = /^data:([^;]+);base64,(.+)$/;
 
+// UNCLAIMED is the only ownerless status a claim can start from — every
+// business, whether self-discovered or bulk-imported by an admin, lands on
+// UNCLAIMED until its real owner claims it. See BusinessStatus in
+// schema.prisma.
+const CLAIMABLE_STATUSES: BusinessStatus[] = [BusinessStatus.UNCLAIMED];
+
 // Module 9 Phase 4 — admin-assisted claim flow, per the explicit decision:
 // merchant requests -> admin reviews -> OTP verification -> atomic
 // ownership transfer -> dashboard access. No fully self-service path exists
@@ -80,7 +86,7 @@ export class ClaimRequestService {
     if (!business) {
       throw new NotFoundException('Business not found');
     }
-    if (business.business_status !== BusinessStatus.UNCLAIMED) {
+    if (!CLAIMABLE_STATUSES.includes(business.business_status)) {
       throw new BadRequestException('This business has already been claimed');
     }
 
@@ -308,7 +314,7 @@ export class ClaimRequestService {
     if (!business) {
       throw new NotFoundException('Business no longer exists');
     }
-    if (business.business_status !== BusinessStatus.UNCLAIMED) {
+    if (!CLAIMABLE_STATUSES.includes(business.business_status)) {
       throw new BadRequestException('This business has already been claimed');
     }
     const conflictingBusiness = await this.prisma.business.findUnique({

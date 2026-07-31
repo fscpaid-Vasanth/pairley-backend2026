@@ -1,103 +1,33 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
-import { ImportJobRepository } from './import-job.repository';
-import { UrlFetchService } from './url-fetch.service';
-import { RobotsService } from './robots.service';
-import { ContentExtractionService } from './content-extraction.service';
-import { TextExtractionService } from './text-extraction.service';
-import { OcrService } from './ocr.service';
-import { ConfidenceScoringService } from './confidence-scoring.service';
-import { CandidateOfferService } from './candidate-offer.service';
-import { NormalizationService } from './normalization.service';
-import { DuplicateDetectionService } from './duplicate-detection.service';
-import { EnrichmentProvider } from './enrichment-provider';
-import { RuleBasedEnrichmentProvider } from './rule-based-enrichment.provider';
-import { EnrichmentService } from './enrichment.service';
-import { FileValidationService } from './file-validation.service';
-import { PdfTextService } from './pdf-text.service';
-import { ImagePreprocessingService } from './image-preprocessing.service';
-import { ImportOrchestrationService } from './import-orchestration.service';
-import { ReviewQueueService } from './review-queue.service';
 import { ClaimRequestService } from './claim-request.service';
 import { BusinessConsolidationService } from './business-consolidation.service';
-import { DiscoveryController } from './discovery.controller';
-import { ReviewQueueController } from './review-queue.controller';
+import { FileValidationService } from './file-validation.service';
 import { ClaimController } from './claim.controller';
 import { ClaimAdminController } from './claim-admin.controller';
 import { BusinessDuplicatesController } from './business-duplicates.controller';
 
-// Module 9 — AI Offer Discovery (Group B). Phase 2 added the website-import
-// pipeline; Phase 3 added the review queue; Phase 4 adds the admin-assisted
-// merchant claim flow (ClaimRequestService owns the request -> admin
-// review -> OTP -> atomic ownership transfer state machine).
-// Module 10 — poster/PDF import. Phase 1 added OcrService/
-// TextExtractionService as foundational pieces with no caller yet; Phase 2
-// wires them into a real endpoint (FileValidationService, PdfTextService,
-// ImagePreprocessingService, and ImportOrchestrationService.importFromFile).
-// StorageService (S3 upload) is injected from the @Global() CommonModule,
-// not imported here explicitly.
-// Module 11 Phase 1 — NormalizationService sits between extraction and
-// CandidateOfferService.createCandidate(), deterministically deriving a
-// discount split / offer_type / validity end date that plain extraction
-// doesn't attempt. No AI/LLM here — that's Phase 3.
-// Module 11 Phase 2 — DuplicateDetectionService runs after a candidate is
-// created, flagging (never merging/blocking) likely duplicate offers and
-// businesses for the admin to review.
-// Module 11 Phase 3 — EnrichmentService runs alongside it, producing
-// category/merchant-type/tag/keyword suggestions with full explainability
-// via a provider-agnostic EnrichmentProvider (today: rule-based only, no
-// AI/LLM — see enrichment-provider.ts).
-// Module 12 Phase 1 — ClaimRequestService gains evidence collection
-// (reuses FileValidationService for the same magic-byte checks Module 10
-// established, and StorageService for upload) on top of its existing
-// Module 9 request -> admin review -> OTP -> transfer state machine.
-// Module 12 Phase 4 — BusinessConsolidationService is the first thing that
-// ever acts on DuplicateDetectionService's (Module 11 Phase 2) advisory
-// duplicate_of_business_id/score/reasons: admin-only, reassigns Offers and
-// soft-removes the losing business (never a hard delete).
-// Module 14 Phase 1 — RobotsService gates UrlFetchService: a permission
-// check (may we read this page?) layered on top of the existing SSRF/size/
-// redirect guards (is it safe to read this page?). Also the phase that
-// finally gives the website-import endpoint an admin UI — it has been
-// reachable only by direct API call since Module 9.
+// Module 9 Phase 4 / Module 12 — the merchant claim and business-
+// consolidation flow: request -> admin review -> OTP -> atomic ownership
+// transfer (ClaimRequestService), and admin-only duplicate-business
+// resolution (BusinessConsolidationService). This module used to also wire
+// the AI Offer Discovery pipeline (website/poster/PDF import, OCR,
+// normalization, enrichment, duplicate detection, review queue) — removed
+// for the bulk-offer-import pivot; see MODULE14_* docs in the repo root for
+// what those pieces did. Everything left here predates and is independent
+// of that pipeline.
 @Module({
   imports: [AuthModule],
   controllers: [
-    DiscoveryController,
-    ReviewQueueController,
     ClaimController,
     ClaimAdminController,
     BusinessDuplicatesController,
   ],
   providers: [
-    ImportJobRepository,
-    RobotsService,
-    UrlFetchService,
-    ContentExtractionService,
-    TextExtractionService,
-    OcrService,
-    ConfidenceScoringService,
-    CandidateOfferService,
-    NormalizationService,
-    DuplicateDetectionService,
-    // Provider-agnostic binding (Decision 1) — swap to a real LLM provider
-    // later by changing only this line, e.g.
-    // { provide: EnrichmentProvider, useClass: OpenAiEnrichmentProvider }.
-    { provide: EnrichmentProvider, useClass: RuleBasedEnrichmentProvider },
-    EnrichmentService,
-    FileValidationService,
-    PdfTextService,
-    ImagePreprocessingService,
-    ImportOrchestrationService,
-    ReviewQueueService,
     ClaimRequestService,
     BusinessConsolidationService,
+    FileValidationService,
   ],
-  exports: [
-    ImportJobRepository,
-    ImportOrchestrationService,
-    ReviewQueueService,
-    ClaimRequestService,
-  ],
+  exports: [ClaimRequestService, FileValidationService],
 })
 export class DiscoveryModule {}

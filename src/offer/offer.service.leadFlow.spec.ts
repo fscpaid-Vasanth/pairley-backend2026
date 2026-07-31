@@ -30,22 +30,30 @@ describe('OfferService — Module 13 lead flow', () => {
   const makeWhatsappService = () => ({
     getSenderPhoneNumberId: jest.fn().mockReturnValue(null),
   });
+  // Lead-generation revision — resolveLeadFollowupMode() defaults an unset
+  // value to ADMIN_MANAGED, matching production's unset-env-var state.
+  const makeConfigService = () => ({
+    get: jest.fn().mockReturnValue(undefined),
+  });
 
   let prisma: ReturnType<typeof makePrisma>;
   let notificationService: ReturnType<typeof makeNotificationService>;
   let whatsappService: ReturnType<typeof makeWhatsappService>;
+  let configService: ReturnType<typeof makeConfigService>;
   let service: OfferService;
 
   beforeEach(() => {
     prisma = makePrisma();
     notificationService = makeNotificationService();
     whatsappService = makeWhatsappService();
+    configService = makeConfigService();
     service = new OfferService(
       prisma as any,
       notificationService as any,
       {} as any, // OtpService — unused by these methods
       {} as any, // StorageService — unused by these methods
       whatsappService as any,
+      configService as any,
     );
   });
 
@@ -107,6 +115,36 @@ describe('OfferService — Module 13 lead flow', () => {
       });
       expect(result).not.toHaveProperty('targetMobiles');
       expect(result).not.toHaveProperty('customerMobile');
+    });
+
+    it('defaults source to WEBSITE when the caller sends none', async () => {
+      prisma.offer.findUnique.mockResolvedValue(offer);
+      prisma.lead.findUnique.mockResolvedValue(null);
+      prisma.customer.findUnique.mockResolvedValue(customer);
+      prisma.lead.create.mockResolvedValue({ id: 'lead-new' });
+
+      await service.createLead('cust-1', 'offer-1');
+
+      expect(prisma.lead.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ source: 'WEBSITE' }),
+        }),
+      );
+    });
+
+    it('records MOBILE_APP when the Capacitor client sends it', async () => {
+      prisma.offer.findUnique.mockResolvedValue(offer);
+      prisma.lead.findUnique.mockResolvedValue(null);
+      prisma.customer.findUnique.mockResolvedValue(customer);
+      prisma.lead.create.mockResolvedValue({ id: 'lead-new' });
+
+      await service.createLead('cust-1', 'offer-1', 'MOBILE_APP');
+
+      expect(prisma.lead.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ source: 'MOBILE_APP' }),
+        }),
+      );
     });
 
     it('does not touch OfferInterest for a non-legacy offer type', async () => {
@@ -189,6 +227,66 @@ describe('OfferService — Module 13 lead flow', () => {
       const result = await service.getDetails('offer-1', 'biz-1', 'Business');
       expect(result.myLead).toBeNull();
       expect(prisma.lead.findUnique).not.toHaveBeenCalled();
+    });
+  });
+
+  // Lead-generation revision — LEAD_FOLLOWUP_MODE wiring. The decision
+  // logic itself is covered exhaustively in offerVisibility.spec.ts; these
+  // confirm getDetails actually reads the env var and passes the right
+  // business/interest signal through, on a real (mocked) request.
+  describe('getDetails — LEAD_FOLLOWUP_MODE wiring', () => {
+    const claimedOffer = {
+      id: 'offer-1',
+      business_id: 'biz-1',
+      status: 'ACTIVE',
+      offer_type: 'STANDARD',
+      merchant_verified: true,
+      is_pairley_exclusive: false,
+      source: 'MANUAL',
+      business: { business_status: 'CLAIMED' },
+      interests: [],
+    };
+
+    it('reads LEAD_FOLLOWUP_MODE from ConfigService', async () => {
+      prisma.offer.findUnique.mockResolvedValue(claimedOffer);
+      prisma.lead.findUnique.mockResolvedValue(null);
+
+      await service.getDetails('offer-1', 'cust-1', 'Customer');
+
+      expect(configService.get).toHaveBeenCalledWith('LEAD_FOLLOWUP_MODE');
+    });
+
+    it('withholds contact under the default (ADMIN_MANAGED) mode even for a CLAIMED business with expressed interest', async () => {
+      configService.get.mockReturnValue(undefined);
+      prisma.offer.findUnique.mockResolvedValue(claimedOffer);
+      prisma.lead.findUnique.mockResolvedValue({
+        id: 'lead-1',
+        status: 'NEW',
+        unlocked_at: null,
+        created_at: new Date(),
+      });
+
+      const result = await service.getDetails('offer-1', 'cust-1', 'Customer');
+
+      expect(result.business.contact_available).toBe(false);
+      expect(result.business.contact_notice).toBe('NOT_SHARED');
+    });
+
+    it('reveals contact under MERCHANT_MANAGED mode for a CLAIMED business once interest is expressed', async () => {
+      configService.get.mockReturnValue('MERCHANT_MANAGED');
+      prisma.offer.findUnique.mockResolvedValue(claimedOffer);
+      prisma.lead.findUnique.mockResolvedValue({
+        id: 'lead-1',
+        status: 'NEW',
+        unlocked_at: null,
+        created_at: new Date(),
+      });
+      prisma.business.findUnique.mockResolvedValue({ mobile: '9876543210' });
+
+      const result = await service.getDetails('offer-1', 'cust-1', 'Customer');
+
+      expect(result.business.contact_available).toBe(true);
+      expect(result.business.contact_notice).toBe('AVAILABLE');
     });
   });
 

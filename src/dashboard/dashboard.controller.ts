@@ -100,6 +100,14 @@ export class DashboardController {
     return this.dashboardService.listCustomers();
   }
 
+  // Lead-generation revision — the lead management dashboard: every
+  // customer who has shown interest in any offer, platform-wide.
+  @Get('admin/leads')
+  @Roles(Role.ADMIN)
+  async getLeads(@Query('status') status?: string) {
+    return this.dashboardService.listLeads(status);
+  }
+
   @Put('admin/offers/moderate/:id')
   @Roles(Role.ADMIN)
   async moderateOffer(@Param('id') id: string, @Body() body: ModerateOfferDto) {

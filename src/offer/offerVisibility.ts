@@ -17,8 +17,50 @@ import { BusinessStatus } from '@prisma/client';
  * selected and then blanked out.
  *
  * Everything here is pure and side-effect free so the policy can be tested
- * on its own, independently of Prisma or the request pipeline.
+ * on its own, independently of Prisma or the request pipeline — including
+ * reading LEAD_FOLLOWUP_MODE, which is why that's the *caller's* job
+ * (offer.service.ts, via ConfigService) and arrives here as a plain
+ * argument rather than this file reading process.env itself.
+ *
+ * Lead-generation revision — configurable follow-up mode. Pairley operates
+ * in one of two modes, set platform-wide via the LEAD_FOLLOWUP_MODE
+ * environment variable:
+ *
+ *  - ADMIN_MANAGED (the default, and the only mode used for the Diwali
+ *    launch): contact is never handed to a customer through this endpoint
+ *    at all, regardless of business status or expressed interest. Pairley
+ *    captures the lead; the admin/merchant follow up manually.
+ *  - MERCHANT_MANAGED (built, tested, deliberately left disabled by the
+ *    default): restores the direct-reveal behavior — a CLAIMED business's
+ *    contact unlocks for a signed-in customer once they've expressed
+ *    interest in that specific offer. An UNCLAIMED business never reveals
+ *    contact in either mode, since nobody has verified there's a real
+ *    owner able to receive the call.
+ *
+ * The point of building both rather than only ADMIN_MANAGED: switching
+ * later, when merchant adoption is mature, is an environment-variable
+ * change, not a redesign — the entitlement logic and the frontend's
+ * contact-display path (gated on `contact_available`, which this file
+ * controls) already exist and are already tested.
  */
+
+export type LeadFollowupMode = 'ADMIN_MANAGED' | 'MERCHANT_MANAGED';
+
+const DEFAULT_LEAD_FOLLOWUP_MODE: LeadFollowupMode = 'ADMIN_MANAGED';
+
+/**
+ * Validates and defaults an env-var value into a real mode — never throws,
+ * so a typo'd or unset environment variable degrades to the safer default
+ * (no contact reveal) rather than failing the request or silently doing
+ * the more permissive thing.
+ */
+export function resolveLeadFollowupMode(
+  raw: string | null | undefined,
+): LeadFollowupMode {
+  return raw === 'MERCHANT_MANAGED'
+    ? 'MERCHANT_MANAGED'
+    : DEFAULT_LEAD_FOLLOWUP_MODE;
+}
 
 /** What the caller is, as far as visibility decisions are concerned. */
 export interface ViewerContext {
@@ -29,15 +71,27 @@ export interface ViewerContext {
 }
 
 export type ContactNotice =
-  /** Not logged in — contact is gated behind signup. */
+  /** Not logged in. */
   | 'SIGN_UP_REQUIRED'
   /**
-   * The business hasn't claimed its Pairley listing. Its contact details
-   * are its own published information, so Pairley doesn't present itself as
-   * the gatekeeper to them — the customer is pointed at the merchant's own
-   * site instead, and the merchant is invited to claim the listing.
+   * ADMIN_MANAGED mode: signed in, but not the owner/admin — Pairley
+   * captures the lead and the merchant/admin follows up manually; contact
+   * is never handed to a customer through this endpoint in this mode.
+   */
+  | 'NOT_SHARED'
+  /**
+   * MERCHANT_MANAGED mode only: the business hasn't claimed its Pairley
+   * listing, so nobody has verified there's a real owner able to receive
+   * the call — point the customer at the merchant's own published site
+   * instead (see PUBLIC_BUSINESS_SELECT's `website`).
    */
   | 'USE_OFFICIAL_WEBSITE'
+  /**
+   * MERCHANT_MANAGED mode only: signed in, entitled (CLAIMED) business,
+   * but this viewer hasn't expressed interest in THIS offer yet — contact
+   * unlocks by asking, not by merely opening the page.
+   */
+  | 'SHOW_INTEREST_REQUIRED'
   /** Caller is entitled to see the contact details. */
   | 'AVAILABLE';
 
@@ -99,7 +153,8 @@ export const OWNER_ONLY_OFFER_FIELDS = {
  * via listOffers before this module.
  *
  * `website` stays public deliberately: it's the merchant's own published
- * front door, and it's what the USE_OFFICIAL_WEBSITE notice points at.
+ * front door, independent of the contact-reveal policy below (that policy
+ * only ever covered mobile/email/address/whatsapp/support_number).
  */
 export const PUBLIC_BUSINESS_SELECT = {
   id: true,
@@ -143,16 +198,19 @@ export function isAdmin(viewer: ViewerContext): boolean {
  *
  * Order matters:
  *  1. Owner / admin — always, they administer the record.
- *  2. Anonymous — never. This is the gap Phase 3A closes.
- *  3. Unclaimed business — never, for anyone else. The merchant hasn't
- *     agreed to be on Pairley, so Pairley shouldn't act as the channel to
- *     them; point at their own site instead.
- *  4. Authenticated viewer, claimed business — allowed, per the existing
- *     access and communication rules.
+ *  2. Anonymous — never.
+ *  3. ADMIN_MANAGED mode — never, for anyone but owner/admin. This is the
+ *     whole point of the mode: Pairley is the only channel, by design.
+ *  4. MERCHANT_MANAGED mode, business not CLAIMED — never; point at the
+ *     merchant's own site instead.
+ *  5. MERCHANT_MANAGED mode, CLAIMED, no expressed interest yet — not yet.
+ *  6. MERCHANT_MANAGED mode, CLAIMED, expressed interest — allowed.
  */
 export function resolveContactAccess(
   viewer: ViewerContext,
   business: { business_status?: string | null } | null,
+  hasExpressedInterest: boolean,
+  mode: LeadFollowupMode = DEFAULT_LEAD_FOLLOWUP_MODE,
 ): ContactAccess {
   if (isOwner(viewer) || isAdmin(viewer)) {
     return { canSeeContact: true, notice: 'AVAILABLE' };
@@ -162,8 +220,16 @@ export function resolveContactAccess(
     return { canSeeContact: false, notice: 'SIGN_UP_REQUIRED' };
   }
 
+  if (mode === 'ADMIN_MANAGED') {
+    return { canSeeContact: false, notice: 'NOT_SHARED' };
+  }
+
   if (business?.business_status !== BusinessStatus.CLAIMED) {
     return { canSeeContact: false, notice: 'USE_OFFICIAL_WEBSITE' };
+  }
+
+  if (!hasExpressedInterest) {
+    return { canSeeContact: false, notice: 'SHOW_INTEREST_REQUIRED' };
   }
 
   return { canSeeContact: true, notice: 'AVAILABLE' };
