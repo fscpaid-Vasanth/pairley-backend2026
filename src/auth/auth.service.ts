@@ -12,6 +12,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { OtpService } from '../common/services/otp.service';
 import { StorageService } from '../common/services/storage.service';
 import { NotificationService } from '../common/services/notification.service';
+import { CategoryService } from '../common/taxonomy/category.service';
 import {
   VerificationStatus,
   SubscriptionStatus,
@@ -31,6 +32,7 @@ export class AuthService implements OnModuleInit {
     private storageService: StorageService,
     private notificationService: NotificationService,
     private configService: ConfigService,
+    private categoryService: CategoryService,
   ) {}
 
   // Merchant Onboarding Pilot — MERCHANT_OTP_MODE=test replaces real SMS OTP
@@ -261,7 +263,7 @@ export class AuthService implements OnModuleInit {
           owner_name: name,
           business_name: extra.business_name,
           business_type: extra.business_type || 'Retail',
-          category: extra.category || 'General',
+          category: this.categoryService.normalizeForStorage(extra.category),
           mobile,
           email: normalizedEmail,
           password_hash: passwordHash,
@@ -471,7 +473,7 @@ export class AuthService implements OnModuleInit {
           owner_name: name,
           business_name: extra.business_name,
           business_type: extra.business_type,
-          category: extra.category || 'General',
+          category: this.categoryService.normalizeForStorage(extra.category),
           mobile,
           email: email?.trim().toLowerCase() || null,
           address: extra.address || '',

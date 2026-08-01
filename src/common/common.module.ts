@@ -6,6 +6,8 @@ import { StorageService } from './services/storage.service';
 import { PaymentService } from './services/payment.service';
 import { NotificationService } from './services/notification.service';
 import { SystemHealthService } from './services/system-health.service';
+import { CategoryService } from './taxonomy/category.service';
+import { CategoryController } from './taxonomy/category.controller';
 import { CLOUD_STORAGE_PROVIDER } from './services/storage-providers/cloud-storage-provider.interface';
 import { S3StorageProvider } from './services/storage-providers/s3-storage.provider';
 import { FirebaseStorageProvider } from './services/storage-providers/firebase-storage.provider';
@@ -51,6 +53,7 @@ const firebaseStorageProviderFactory = {
 @Global()
 @Module({
   imports: [ConfigModule, TerminusModule],
+  controllers: [CategoryController],
   providers: [
     OtpService,
     cloudStorageProviderFactory,
@@ -60,6 +63,7 @@ const firebaseStorageProviderFactory = {
     PaymentService,
     NotificationService,
     SystemHealthService,
+    CategoryService,
   ],
   exports: [
     OtpService,
@@ -67,6 +71,7 @@ const firebaseStorageProviderFactory = {
     PaymentService,
     NotificationService,
     SystemHealthService,
+    CategoryService,
   ],
 })
 export class CommonModule {}

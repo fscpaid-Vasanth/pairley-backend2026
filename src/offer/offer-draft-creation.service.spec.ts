@@ -1,4 +1,5 @@
 import { OfferDraftCreationService } from './offer-draft-creation.service';
+import { CategoryService } from '../common/taxonomy/category.service';
 
 describe('OfferDraftCreationService', () => {
   let prisma: {
@@ -15,7 +16,7 @@ describe('OfferDraftCreationService', () => {
       },
       $transaction: jest.fn(),
     };
-    service = new OfferDraftCreationService(prisma as any);
+    service = new OfferDraftCreationService(prisma as any, new CategoryService());
   });
 
   describe('matchOrCreateBusiness', () => {
@@ -44,7 +45,10 @@ describe('OfferDraftCreationService', () => {
           data: expect.objectContaining({
             business_name: 'Spec Gym',
             mobile: '9876543210',
-            category: 'Fitness',
+            // Normalised on write — a caller passing the display-cased
+            // 'Fitness' must never persist a second spelling of a
+            // category that already exists as 'fitness'.
+            category: 'fitness',
             business_status: 'UNCLAIMED',
             source: 'ADMIN',
           }),
@@ -70,7 +74,10 @@ describe('OfferDraftCreationService', () => {
       const data = prisma.business.create.mock.calls[0][0].data;
       expect(data.owner_name).toBe('X');
       expect(data.business_type).toBe('');
-      expect(data.category).toBe('');
+      // A placeholder business genuinely has no category yet, so an empty
+      // value resolves to the `general` holding pen rather than an empty
+      // string — which would otherwise become its own phantom category.
+      expect(data.category).toBe('general');
       expect(data.address).toBe('');
       expect(data.city).toBe('');
       expect(data.state).toBe('');

@@ -10,6 +10,7 @@ import { StorageService } from '../common/services/storage.service';
 import { FileValidationService } from '../discovery/file-validation.service';
 import { OfferDraftCreationService } from '../offer/offer-draft-creation.service';
 import { extractZipEntries } from '../common/utils/extract-zip-entries';
+import { CategoryService } from '../common/taxonomy/category.service';
 
 const COVER_FOLDER = 'offer-publisher/covers';
 const GALLERY_FOLDER = 'offer-publisher/gallery';
@@ -60,6 +61,7 @@ export class OfferPublisherService {
     private readonly storage: StorageService,
     private readonly fileValidation: FileValidationService,
     private readonly draftCreation: OfferDraftCreationService,
+    private readonly categoryService: CategoryService,
   ) {}
 
   // ---------------------------------------------------------------------
@@ -239,6 +241,15 @@ export class OfferPublisherService {
     const mobile = fields.mobile?.trim();
     const rePointing = Boolean(mobile && mobile !== offer.business.mobile);
 
+    // Resolved once, up front, so the offer and its business can never end
+    // up on different spellings of the same category. Throws before the
+    // transaction opens if the value is unrecognised. `undefined` means
+    // "field not supplied" and leaves the existing value untouched.
+    const category =
+      fields.category === undefined
+        ? undefined
+        : this.categoryService.normalizeForStorage(fields.category);
+
     // `Offer.business` is onDelete: Cascade — deleting a business cascades
     // to every offer still pointing at it. The re-point (offer.update to
     // the new business_id) and the old-business orphan cleanup are
@@ -252,7 +263,7 @@ export class OfferPublisherService {
             merchantName: fields.merchantName || offer.business.business_name,
             mobile,
             email: fields.email,
-            category: fields.category,
+            category,
             address: fields.address,
             city: fields.city,
             state: fields.state,
@@ -275,7 +286,7 @@ export class OfferPublisherService {
             address: fields.address ?? offer.business.address,
             state: fields.state ?? offer.business.state,
             pincode: fields.pincode ?? offer.business.pincode,
-            category: fields.category ?? offer.business.category,
+            category: category ?? offer.business.category,
             google_maps_link:
               fields.googleMapsLink ?? offer.business.google_maps_link,
           },
@@ -288,7 +299,7 @@ export class OfferPublisherService {
           business_id: businessId,
           title: fields.title ?? offer.title,
           description: fields.description ?? offer.description,
-          category: fields.category ?? offer.category,
+          category: category ?? offer.category,
           original_price: fields.originalPrice ?? offer.original_price,
           offer_price: fields.offerPrice ?? offer.offer_price,
           required_people: fields.minParticipants ?? offer.required_people,

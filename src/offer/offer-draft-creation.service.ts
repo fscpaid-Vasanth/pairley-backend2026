@@ -7,6 +7,7 @@ import {
   Source,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { CategoryService } from '../common/taxonomy/category.service';
 
 export interface DraftBusinessFields {
   merchantName: string;
@@ -40,7 +41,10 @@ export interface DraftBusinessFields {
  */
 @Injectable()
 export class OfferDraftCreationService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly categoryService: CategoryService,
+  ) {}
 
   /**
    * Finds an existing business by phone, or creates a new UNCLAIMED one.
@@ -74,7 +78,9 @@ export class OfferDraftCreationService {
         owner_name: fields.merchantName,
         business_name: fields.merchantName,
         business_type: fields.category || '',
-        category: fields.category || '',
+        // Placeholder businesses legitimately have no category yet, so an
+        // empty value resolves to `general` rather than being rejected.
+        category: this.categoryService.normalizeForStorage(fields.category),
         mobile,
         email: fields.email?.trim() || null,
         address: fields.address || '',

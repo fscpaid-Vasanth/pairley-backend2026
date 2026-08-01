@@ -18,6 +18,7 @@ import {
 import { NotificationService } from '../common/services/notification.service';
 import { OtpService } from '../common/services/otp.service';
 import { StorageService } from '../common/services/storage.service';
+import { CategoryService } from '../common/taxonomy/category.service';
 import {
   WhatsappService,
   resolveLeadWhatsappNumber,
@@ -98,6 +99,7 @@ export class OfferService {
     private storageService: StorageService,
     private whatsappService: WhatsappService,
     private configService: ConfigService,
+    private categoryService: CategoryService,
   ) {}
 
   async createOffer(businessId: string, data: any) {
@@ -145,7 +147,9 @@ export class OfferService {
         title: data.title,
         description: data.description,
         offer_type: data.offer_type as OfferType,
-        category: data.category,
+        // Normalised, never stored raw — see CategoryService. Rejects an
+        // unrecognised value rather than letting it fragment aggregation.
+        category: this.categoryService.normalizeForStorage(data.category),
         original_price: parseFloat(data.original_price),
         offer_price: parseFloat(data.offer_price),
         required_people: parseInt(data.required_people),

@@ -3,6 +3,7 @@ import { BadRequestException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
+import { CategoryService } from '../common/taxonomy/category.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { OtpService } from '../common/services/otp.service';
 import { StorageService } from '../common/services/storage.service';
@@ -58,6 +59,9 @@ describe('AuthService.verifyOtp', () => {
           useValue: { sendNotification: jest.fn() },
         },
         { provide: ConfigService, useValue: makeConfig(configValues) },
+        // Real instance — CategoryService is pure, dependency-free and
+        // covered by its own spec, so the genuine normalisation runs here.
+        CategoryService,
       ],
     }).compile();
 
@@ -174,6 +178,9 @@ describe('AuthService — Merchant OTP pilot bypass', () => {
           useValue: { sendNotification: jest.fn() },
         },
         { provide: ConfigService, useValue: makeConfig(configValues) },
+        // Real instance — CategoryService is pure, dependency-free and
+        // covered by its own spec, so the genuine normalisation runs here.
+        CategoryService,
       ],
     }).compile();
 
