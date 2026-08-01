@@ -4,7 +4,8 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { LeadStatus } from '@prisma/client';
+import { EntitlementService } from '../entitlement/entitlement.service';
+import { LeadStatus, EntitlementRuleType } from '@prisma/client';
 import {
   renderLeadMessage,
   getPublicTemplateCatalog,
@@ -13,7 +14,10 @@ import {
 
 @Injectable()
 export class LeadService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private entitlementService: EntitlementService,
+  ) {}
 
   // Module 13 — identity stays hidden until the merchant explicitly unlocks
   // a lead (Phase 1: free, manual, no quota — see MERCHANT_LEAD_UNLOCK.md).
@@ -108,13 +112,49 @@ export class LeadService {
     if (lead.shop_id !== businessId) {
       throw new ForbiddenException('You do not own this lead');
     }
+    // Ownership is re-checked above on every call, so an already-unlocked
+    // lead short-circuits before entitlement is consulted — re-opening a
+    // lead the merchant has already paid for must never cost them twice.
     if (lead.unlocked_at) {
       return lead;
     }
-    return this.prisma.lead.update({
-      where: { id: leadId },
-      data: { unlocked_at: new Date() },
-    });
+
+    // M1.2 — the gate. LeadService asks only "may this business unlock?";
+    // which policy said so, and why, is entirely the engine's business.
+    const decision = await this.entitlementService.evaluate(businessId);
+    if (!decision.allowed) {
+      throw new ForbiddenException(decision.message);
+    }
+
+    // The unlock and its audit row commit together: an unlock that revealed
+    // contact details but left no audit trail would be unaccounted-for
+    // usage, and under a quota or credits model, free revenue leakage.
+    const [updated] = await this.prisma.$transaction([
+      this.prisma.lead.update({
+        where: { id: leadId },
+        data: { unlocked_at: new Date() },
+      }),
+      this.prisma.leadUnlockAudit.create({
+        data: {
+          lead_id: leadId,
+          business_id: businessId,
+          actor_id: businessId,
+          actor_role: 'BUSINESS',
+          policy_id: decision.policy?.id ?? null,
+          policy_name: decision.policy?.name ?? 'No policy',
+          policy_rule_type:
+            decision.policy?.ruleType ?? EntitlementRuleType.UNLIMITED,
+          policy_snapshot: {
+            reason: decision.reason,
+            rules: decision.policy?.rules ?? {},
+            remainingBefore: decision.remaining,
+            endsAt: decision.policy?.endsAt?.toISOString() ?? null,
+          },
+        },
+      }),
+    ]);
+
+    return updated;
   }
 
   // Module 13 — anonymous 1:1 chat, gated to exactly the two parties on this

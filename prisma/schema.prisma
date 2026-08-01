@@ -329,27 +329,27 @@ model Subscription {
 }
 
 model Offer {
-  id              String      @id @default(uuid())
-  business_id     String
-  title           String
-  description     String
-  offer_type      OfferType
-  category        String
-  original_price  Float
-  offer_price     Float
-  required_people Int
-  joined_people   Int         @default(0)
-  start_date      DateTime
-  end_date        DateTime
-  status          OfferStatus @default(DRAFT)
-  source          Source      @default(MANUAL) // "offer_source" — reused from Module 1, shared with Business
-  whatsapp_number String?
+  id               String      @id @default(uuid())
+  business_id      String
+  title            String
+  description      String
+  offer_type       OfferType
+  category         String
+  original_price   Float
+  offer_price      Float
+  required_people  Int
+  joined_people    Int         @default(0)
+  start_date       DateTime
+  end_date         DateTime
+  status           OfferStatus @default(DRAFT)
+  source           Source      @default(MANUAL) // "offer_source" — reused from Module 1, shared with Business
+  whatsapp_number  String?
   // Offer Publisher's per-draft form; no prior column for offer-level terms
   // existed (facility_details is unrelated — staff/specialist JSON).
-  terms             String?
+  terms            String?
   // Set when an admin rejects a draft via the Offer Publisher approval
   // step — surfaced back to them so a re-edit knows what to fix.
-  rejection_reason  String?
+  rejection_reason String?
 
   // Legacy media — kept for migration compatibility, no longer written by new
   // code. Backfilled into cover_image/gallery_images at migration time.
@@ -581,7 +581,7 @@ model Lead {
   // explicit "Unlock Customer Details" action (Phase 1: free, no quota —
   // see MERCHANT_LEAD_UNLOCK.md). Gates customer_mobile/name on both the
   // Leads list and the offer-details lead-status response.
-  unlocked_at     DateTime?
+  unlocked_at DateTime?
 
   messages LeadMessage[]
 
@@ -610,7 +610,7 @@ model Lead {
 // this module. This is a plain two-party thread — one Lead, one customer,
 // one business, free text both directions.
 model LeadMessage {
-  id          String   @id @default(uuid())
+  id          String @id @default(uuid())
   lead_id     String
   // Stored instead of a customer/business FK — the reader already knows
   // which lead (and therefore which two parties) this belongs to; all the
@@ -811,25 +811,25 @@ enum BulkImageStatus {
 // counts, incrementing them as it processes each row/image — never derived
 // by a COUNT(*) query at read time.
 model BulkImportBatch {
-  id             String            @id @default(uuid())
+  id             String           @id @default(uuid())
   file_name      String
   file_url       String
   uploaded_by    String
-  status         BulkImportStatus  @default(QUEUED)
-  total_rows     Int               @default(0)
-  valid_rows     Int               @default(0)
-  invalid_rows   Int               @default(0)
-  duplicate_rows Int               @default(0)
-  created_rows   Int               @default(0) // VALID rows that now have a DRAFT business+offer — the CREATING-phase progress counter
-  published_rows Int               @default(0)
-  total_images   Int               @default(0)
-  mapped_images  Int               @default(0)
-  failed_images  Int               @default(0)
+  status         BulkImportStatus @default(QUEUED)
+  total_rows     Int              @default(0)
+  valid_rows     Int              @default(0)
+  invalid_rows   Int              @default(0)
+  duplicate_rows Int              @default(0)
+  created_rows   Int              @default(0) // VALID rows that now have a DRAFT business+offer — the CREATING-phase progress counter
+  published_rows Int              @default(0)
+  total_images   Int              @default(0)
+  mapped_images  Int              @default(0)
+  failed_images  Int              @default(0)
   error          String?
   started_at     DateTime?
   completed_at   DateTime?
-  created_at     DateTime          @default(now())
-  updated_at     DateTime          @updatedAt
+  created_at     DateTime         @default(now())
+  updated_at     DateTime         @updatedAt
 
   rows   BulkImportRow[]
   images BulkImportImage[]
@@ -838,26 +838,26 @@ model BulkImportBatch {
 }
 
 model BulkImportRow {
-  id                   String              @id @default(uuid())
-  batch_id             String
-  row_no               Int
-  raw_data             Json // the original row, for the downloadable error report
+  id                  String              @id @default(uuid())
+  batch_id            String
+  row_no              Int
+  raw_data            Json // the original row, for the downloadable error report
   // The validated, typed form of a VALID/DUPLICATE row — computed once by
   // validateBulkOfferRow() during createBatch() and never recomputed.
   // Draft-creation and publish both read this rather than re-validating
   // raw_data, so a row's outcome can't silently diverge from what the
   // admin saw in Preview.
-  normalized           Json?
-  status               BulkImportRowStatus @default(PENDING)
-  errors               String[]            @default([])
+  normalized          Json?
+  status              BulkImportRowStatus @default(PENDING)
+  errors              String[]            @default([])
   // Non-blocking flags on an otherwise VALID row (e.g. an unusually steep
   // discount) — kept separate from errors so the Preview screen can show
   // "ready to publish, but take a look at this" distinctly from "blocked".
-  warnings             String[]            @default([])
-  matched_business_id  String?
-  created_offer_id     String?
-  created_at           DateTime            @default(now())
-  updated_at           DateTime            @updatedAt
+  warnings            String[]            @default([])
+  matched_business_id String?
+  created_offer_id    String?
+  created_at          DateTime            @default(now())
+  updated_at          DateTime            @updatedAt
 
   batch BulkImportBatch @relation(fields: [batch_id], references: [id], onDelete: Cascade)
 
@@ -881,4 +881,104 @@ model BulkImportImage {
 
   @@index([batch_id, status])
   @@map("bulk_import_images")
+}
+
+// =============================================================================
+// Lead Unlock Entitlement Engine (M1.2)
+// =============================================================================
+// Decides whether a merchant may reveal a lead's contact details, and records
+// every decision. Deliberately decoupled from Lead/Offer/Business: the engine
+// is handed ids and returns a verdict, so pricing and packaging can change
+// without touching those entities or their schemas.
+//
+// The three models below are intended to be the LAST schema change this
+// feature ever needs. Everything variable — limits, windows, eligibility,
+// pricing — lives in EntitlementPolicy.rules as JSON, editable from the admin
+// dashboard with no deploy. New monetisation models are new rule shapes, not
+// new tables.
+
+enum EntitlementRuleType {
+  UNLIMITED // allow every unlock — used by the launch campaign
+  MONTHLY_QUOTA // allow up to rules.limit unlocks per calendar month
+  CREDITS // allow while granted credits remain unspent
+  BLOCKED // explicit deny — the paywall state
+}
+
+model EntitlementPolicy {
+  id        String              @id @default(uuid())
+  name      String // shown to merchants, e.g. "Diwali Launch Benefit"
+  rule_type EntitlementRuleType
+
+  // Type-specific configuration. MONTHLY_QUOTA -> {"limit":10};
+  // CREDITS -> {"allowNegative":false}; UNLIMITED/BLOCKED -> {}.
+  // Adding a future model means a new rule_type + a new shape here, never
+  // a migration.
+  rules Json @default("{}")
+
+  // Eligibility. Empty object = applies to everyone. Supported keys today:
+  // {"verifiedOnly":true} and {"businessIds":["..."]}. Unknown keys are
+  // ignored rather than failing closed, so a policy written for a newer
+  // build cannot lock merchants out of an older one.
+  applies_to Json @default("{}")
+
+  // Higher wins. The first active, in-window, matching policy decides — so a
+  // promotional campaign simply outranks the standing default rather than
+  // replacing it, and expires back to it automatically.
+  priority Int @default(0)
+
+  is_active Boolean   @default(true)
+  // Null start = active immediately; null end = no expiry. The launch
+  // campaign sets an end date here, which is what makes the hand-back to the
+  // default policy automatic and code-free.
+  starts_at DateTime?
+  ends_at   DateTime?
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@index([is_active, priority])
+  @@map("entitlement_policies")
+}
+
+model LeadUnlockAudit {
+  id          String @id @default(uuid())
+  lead_id     String
+  business_id String
+  // Who performed it — a business user id, or an admin id for support-
+  // initiated unlocks.
+  actor_id    String
+  actor_role  String // 'BUSINESS' | 'ADMIN'
+
+  policy_id        String?
+  // Snapshot, not just the FK: a policy can later be renamed, re-tuned or
+  // deleted, and the audit trail must still say truthfully which terms
+  // applied at the moment of the unlock.
+  policy_name      String
+  policy_rule_type EntitlementRuleType
+  policy_snapshot  Json                @default("{}")
+
+  unlocked_at DateTime @default(now())
+
+  // Doubles as the consumption ledger: monthly-quota usage is COUNT(*) over
+  // a period here, so quotas need no separate counter table to drift out of
+  // sync with reality.
+  @@index([business_id, unlocked_at])
+  @@index([lead_id])
+  @@map("lead_unlock_audit")
+}
+
+model EntitlementGrant {
+  id          String    @id @default(uuid())
+  business_id String
+  // Positive = credits added (purchase, promo, support gesture). Balance is
+  // SUM(credits) - COUNT(audit rows consumed under a CREDITS policy), so
+  // credits work as a ledger with no mutable balance column to corrupt.
+  credits     Int
+  reason      String
+  granted_by  String
+  expires_at  DateTime?
+  created_at  DateTime  @default(now())
+
+  @@index([business_id, expires_at])
+  @@map("entitlement_grants")
 }

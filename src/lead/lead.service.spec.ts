@@ -42,14 +42,40 @@ describe('LeadService', () => {
     leadInteractionEvent: {
       createMany: jest.fn().mockResolvedValue({ count: 0 }),
     },
+    leadUnlockAudit: { create: jest.fn().mockResolvedValue({}) },
+    // The real client resolves an array of already-built operations, so
+    // Promise.all reproduces its behaviour closely enough that the
+    // individual delegate mocks still record their own calls.
+    $transaction: jest.fn((ops: unknown[]) => Promise.all(ops)),
+  });
+
+  const makeEntitlement = (allowed = true) => ({
+    evaluate: jest.fn().mockResolvedValue({
+      allowed,
+      reason: allowed ? 'UNLIMITED' : 'BLOCKED',
+      message: allowed
+        ? 'Diwali Launch Benefit'
+        : 'Unlocking customer details requires an active plan on your account.',
+      policy: {
+        id: 'campaign',
+        name: 'Diwali Launch Benefit',
+        ruleType: 'UNLIMITED',
+        rules: {},
+        endsAt: new Date('2026-11-15'),
+      },
+      remaining: null,
+      isPromotional: true,
+    }),
   });
 
   let prisma: ReturnType<typeof makePrisma>;
+  let entitlement: ReturnType<typeof makeEntitlement>;
   let service: LeadService;
 
   beforeEach(() => {
     prisma = makePrisma();
-    service = new LeadService(prisma as any);
+    entitlement = makeEntitlement();
+    service = new LeadService(prisma as any, entitlement as any);
   });
 
   describe('identity masking — getLeads / getLead / updateLeadStatus', () => {
@@ -118,6 +144,69 @@ describe('LeadService', () => {
       const result = await service.unlockLead('biz-1', 'lead-1');
       expect(prisma.lead.update).not.toHaveBeenCalled();
       expect(result).toBe(already);
+    });
+
+    // M1.2 — entitlement gate.
+    it('does not consult entitlement for an already-unlocked lead', async () => {
+      // Re-opening a lead the merchant already holds must never cost them a
+      // second time under a quota or credits model.
+      prisma.lead.findUnique.mockResolvedValue(
+        makeLead({ unlocked_at: new Date('2026-07-29T09:00:00Z') }),
+      );
+      await service.unlockLead('biz-1', 'lead-1');
+      expect(entitlement.evaluate).not.toHaveBeenCalled();
+    });
+
+    it('refuses the unlock when entitlement denies it, and writes no audit row', async () => {
+      entitlement = makeEntitlement(false);
+      service = new LeadService(prisma as any, entitlement as any);
+      prisma.lead.findUnique.mockResolvedValue(makeLead());
+
+      await expect(service.unlockLead('biz-1', 'lead-1')).rejects.toThrow(
+        /active plan/i,
+      );
+      expect(prisma.lead.update).not.toHaveBeenCalled();
+      expect(prisma.leadUnlockAudit.create).not.toHaveBeenCalled();
+    });
+
+    it('surfaces the entitlement engine message verbatim so merchants see why', async () => {
+      entitlement = makeEntitlement(false);
+      service = new LeadService(prisma as any, entitlement as any);
+      prisma.lead.findUnique.mockResolvedValue(makeLead());
+
+      await expect(service.unlockLead('biz-1', 'lead-1')).rejects.toThrow(
+        'Unlocking customer details requires an active plan on your account.',
+      );
+    });
+
+    it('writes an audit row snapshotting the policy that authorised it', async () => {
+      prisma.lead.findUnique.mockResolvedValue(makeLead());
+      prisma.lead.update.mockResolvedValue(makeLead({ unlocked_at: new Date() }));
+
+      await service.unlockLead('biz-1', 'lead-1');
+
+      expect(prisma.leadUnlockAudit.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          lead_id: 'lead-1',
+          business_id: 'biz-1',
+          actor_id: 'biz-1',
+          actor_role: 'BUSINESS',
+          policy_id: 'campaign',
+          policy_name: 'Diwali Launch Benefit',
+        }),
+      });
+    });
+
+    it('commits the unlock and its audit row in a single transaction', async () => {
+      // An unlock that revealed contact details but left no audit row would
+      // be unaccounted-for usage — and, under a paid model, lost revenue.
+      prisma.lead.findUnique.mockResolvedValue(makeLead());
+      prisma.lead.update.mockResolvedValue(makeLead({ unlocked_at: new Date() }));
+
+      await service.unlockLead('biz-1', 'lead-1');
+
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.$transaction.mock.calls[0][0]).toHaveLength(2);
     });
 
     it('rejects unlocking a lead owned by a different business', async () => {

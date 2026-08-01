@@ -23,6 +23,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
 import { WhatsappModule } from './whatsapp/whatsapp.module';
 import { DiscoveryModule } from './discovery/discovery.module';
 import { OfferPublisherModule } from './offer-publisher/offer-publisher.module';
+import { EntitlementModule } from './entitlement/entitlement.module';
 
 @Module({
   imports: [
@@ -52,6 +53,7 @@ import { OfferPublisherModule } from './offer-publisher/offer-publisher.module';
     WhatsappModule,
     DiscoveryModule,
     OfferPublisherModule,
+    EntitlementModule,
   ],
   controllers: [AppController],
   providers: [
