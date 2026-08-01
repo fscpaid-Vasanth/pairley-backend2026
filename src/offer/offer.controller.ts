@@ -287,6 +287,8 @@ export class OfferController {
     @Query('lat') lat?: string,
     @Query('lng') lng?: string,
     @Query('radiusKm') radiusKm?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
   ) {
     if (category && !OFFER_CATEGORIES.includes(category as any)) {
       throw new BadRequestException(`Unknown category: ${category}`);
@@ -319,6 +321,8 @@ export class OfferController {
       lat: parsedLat,
       lng: parsedLng,
       radiusKm: parsedRadiusKm,
+      page: page !== undefined ? parseInt(page, 10) : undefined,
+      limit: limit !== undefined ? parseInt(limit, 10) : undefined,
     });
   }
 

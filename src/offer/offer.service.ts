@@ -47,6 +47,13 @@ const LEGACY_MATCHING_OFFER_TYPES = new Set([
   'PACKAGE_DEAL',
 ]);
 
+// listOffers() row cap — see the comment at its call site for why this
+// exists. 100 comfortably covers today's admin views without a UI change;
+// MAX exists so a caller can never request an unbounded fetch even if a
+// future page passes a huge explicit `limit`.
+const DEFAULT_LIST_OFFERS_PAGE_SIZE = 100;
+const MAX_LIST_OFFERS_PAGE_SIZE = 200;
+
 // Backend equivalent of the frontend's src/utils/geo.js haversineDistance —
 // kept separate rather than shared, since this file has no dependency on
 // the frontend package and the formula is a handful of lines.
@@ -446,6 +453,8 @@ export class OfferService {
     lat?: number;
     lng?: number;
     radiusKm?: number;
+    page?: number;
+    limit?: number;
   }) {
     const whereClause: any = {};
 
@@ -486,6 +495,22 @@ export class OfferService {
       ];
     }
 
+    // `status=ALL` (admin/merchant tooling — Deals Moderation, category
+    // counts) was the one caller of this method with no row cap at all: it
+    // fetched the entire offers table, unpaginated, on every call. At
+    // today's catalog size (~20 rows) that's invisible; at the "thousands
+    // of offers" volume the launch roadmap targets, an unbounded admin
+    // fetch is a real scaling failure waiting to happen. MAX_PAGE_SIZE is a
+    // hard ceiling regardless of what a caller requests; DEFAULT_PAGE_SIZE
+    // keeps every existing caller's response shape (a plain array) exactly
+    // as it was today, just bounded.
+    const requestedLimit = filters.limit ?? DEFAULT_LIST_OFFERS_PAGE_SIZE;
+    const take = Math.min(
+      Math.max(1, requestedLimit),
+      MAX_LIST_OFFERS_PAGE_SIZE,
+    );
+    const page = Math.max(1, filters.page ?? 1);
+
     const offers = await this.prisma.offer.findMany({
       where: whereClause,
       select: {
@@ -499,6 +524,8 @@ export class OfferService {
         business: { select: PUBLIC_BUSINESS_SELECT },
       },
       orderBy: { created_at: 'desc' },
+      take,
+      skip: (page - 1) * take,
     });
 
     // Geo/radius filtering happens here rather than in the WHERE clause: an
