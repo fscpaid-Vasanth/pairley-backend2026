@@ -280,7 +280,19 @@ export class OfferPublisherService {
           data: {
             business_name: fields.merchantName ?? offer.business.business_name,
             owner_name: fields.merchantName ?? offer.business.owner_name,
-            email: fields.email ?? offer.business.email,
+            // Business.email is @unique. The admin form always submits
+            // `email: ""` when the field is left blank (never omitted), so
+            // `?? offer.business.email` wrote the literal empty string —
+            // fine for the first draft ever saved with a blank email, and a
+            // P2002 unique-constraint crash (surfacing as a raw 500) for
+            // every one after it, since Postgres treats '' as a real,
+            // colliding value unlike NULL. Normalise blank to null, exactly
+            // matching matchOrCreateBusiness's already-correct handling of
+            // the same field on the sibling (re-point) branch below.
+            email:
+              fields.email === undefined
+                ? offer.business.email
+                : fields.email.trim() || null,
             city: fields.city ?? offer.business.city,
             area: fields.area ?? offer.business.area,
             address: fields.address ?? offer.business.address,

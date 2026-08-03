@@ -313,6 +313,64 @@ describe('OfferPublisherService', () => {
       );
     });
 
+    // Regression test: Business.email is @unique. The admin form always
+    // submits `email: ""` when the field is left blank (never omits it),
+    // and `fields.email ?? offer.business.email` treated that empty string
+    // as a real value to write — fine for the first business ever saved
+    // with a blank email, a P2002 unique-constraint crash (surfacing as a
+    // raw "Internal server error" 500) for every one after it, since
+    // Postgres treats '' as a real, colliding value unlike NULL. This
+    // happened for real in production — reproduced live, root-caused to
+    // this exact line, and the fix verified against a fresh throwaway
+    // draft before being applied here.
+    it('normalises a blank email to null rather than writing the literal empty string', async () => {
+      const draft = draftOffer({ status: 'DRAFT', business: business({ email: null }) });
+      prisma.offer.findUnique.mockResolvedValue(draft);
+      prisma.offer.update.mockResolvedValue(draft);
+
+      await service.updateDraft('offer-1', {
+        address: 'JP Nagar',
+        email: '',
+      });
+
+      expect(prisma.business.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ email: null }),
+        }),
+      );
+    });
+
+    it('leaves the stored email untouched when the field is not supplied at all', async () => {
+      const draft = draftOffer({
+        status: 'DRAFT',
+        business: business({ email: 'merchant@example.com' }),
+      });
+      prisma.offer.findUnique.mockResolvedValue(draft);
+      prisma.offer.update.mockResolvedValue(draft);
+
+      await service.updateDraft('offer-1', { address: 'JP Nagar' });
+
+      expect(prisma.business.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ email: 'merchant@example.com' }),
+        }),
+      );
+    });
+
+    it('trims and keeps a real, non-blank email', async () => {
+      const draft = draftOffer({ status: 'DRAFT', business: business({ email: null }) });
+      prisma.offer.findUnique.mockResolvedValue(draft);
+      prisma.offer.update.mockResolvedValue(draft);
+
+      await service.updateDraft('offer-1', { email: '  merchant@example.com  ' });
+
+      expect(prisma.business.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ email: 'merchant@example.com' }),
+        }),
+      );
+    });
+
     it('refuses to edit an already-published (ACTIVE) offer', async () => {
       prisma.offer.findUnique.mockResolvedValue(
         draftOffer({ status: 'ACTIVE' }),
