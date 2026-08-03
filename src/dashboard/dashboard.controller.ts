@@ -18,8 +18,14 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { IsNotEmpty, IsString, IsIn, IsBoolean } from 'class-validator';
 
 class VerifyBusinessDto {
-  @IsString()
-  @IsNotEmpty()
+  // The TS union type alone gives no runtime protection — class-validator
+  // never reads TypeScript types, only decorators — so an unvalidated
+  // string reached `status as VerificationStatus` in
+  // DashboardService.verifyBusiness() and got force-cast straight into a
+  // Prisma write. Any typo'd/malformed value (e.g. wrong casing) surfaced
+  // as an uncaught Prisma enum-constraint error (raw 500) instead of a
+  // clean 400 — found while verifying the admin approval flow.
+  @IsIn(['APPROVED', 'REJECTED', 'PENDING'])
   status: 'APPROVED' | 'REJECTED' | 'PENDING';
 }
 
