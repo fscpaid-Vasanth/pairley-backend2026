@@ -170,14 +170,28 @@ This is an automated copy of the ticket sent to support@pairley.com.
     });
   }
 
-  async getTicketById(id: string) {
+  // Guest tickets (user_id === 'guest' — createChatSession/
+  // createPublicTicket) are readable by anyone holding the ticket's own
+  // UUID, matching the secret-link trust model SupportPage.jsx's anonymous
+  // chat polling already depends on. A real registered user's ticket does
+  // not get that same free pass: the caller must be authenticated as
+  // either the ticket's own owner or an Admin. Previously this had no
+  // check at all, for either kind of ticket — any caller with any ticket
+  // ID, guest or not, could read its full contents.
+  async getTicketById(id: string, callerId?: string, callerRole?: string) {
     const ticket = await this.prisma.supportTicket.findUnique({
       where: { id },
     });
     if (!ticket) {
       throw new NotFoundException('Ticket not found');
     }
-    return ticket;
+    if (ticket.user_id === 'guest') {
+      return ticket;
+    }
+    if (callerRole === 'Admin' || callerId === ticket.user_id) {
+      return ticket;
+    }
+    throw new ForbiddenException('You do not have access to this ticket');
   }
 
   async getTickets(userId: string, role: string) {

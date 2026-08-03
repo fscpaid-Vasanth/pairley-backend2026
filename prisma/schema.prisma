@@ -537,6 +537,11 @@ model OtpVerification {
   code       String
   expires_at DateTime
   created_at DateTime @default(now())
+  // Brute-force lockout — mirrors ClaimRequest.otp_attempts exactly.
+  // verifyOtp() locks a mobile out after MAX_OTP_ATTEMPTS wrong guesses
+  // against its most recent OTP; a fresh sendOtp() (which deletes every
+  // prior row for that mobile) is the only way to reset it.
+  attempts   Int      @default(0)
 
   @@map("otp_verifications")
 }

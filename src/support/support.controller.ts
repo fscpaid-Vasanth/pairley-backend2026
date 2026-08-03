@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { SupportService } from './support.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../common/guards/optional-jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { IsNotEmpty, IsString, IsOptional } from 'class-validator';
 
@@ -107,9 +108,18 @@ export class SupportController {
     return this.supportService.sendChatMessage(body);
   }
 
+  // Optional auth: guest chat sessions (createChatSession/createPublicTicket
+  // — see their `user_id: 'guest'`) are, by design, accessed by anonymous
+  // callers who hold the ticket's own unguessable UUID — the same
+  // secret-link trust model the claim-token flow uses, and SupportPage.jsx
+  // relies on it to poll a guest's own just-created session. A REAL
+  // registered user's ticket must not rely on that same "unguessable ID"
+  // alone, though — getTicketById enforces ownership for any ticket whose
+  // user_id isn't the guest sentinel.
   @Get('ticket/:id')
-  async getTicketById(@Param('id') id: string) {
-    return this.supportService.getTicketById(id);
+  @UseGuards(OptionalJwtAuthGuard)
+  async getTicketById(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.supportService.getTicketById(id, user?.sub, user?.role);
   }
 
   @Get('tickets')

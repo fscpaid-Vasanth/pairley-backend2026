@@ -10,6 +10,7 @@ import {
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -240,14 +241,25 @@ class LoginDto {
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
+  // Same rate — 3 per 10 min per IP — as claim.controller.ts's otp/send:
+  // real SMS cost per send, and no reason this flow should tolerate more
+  // automated abuse than the claim flow already refuses to.
   @Post('send-otp')
   @HttpCode(HttpStatus.OK)
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 3, ttl: 600_000 } })
   async sendOtp(@Body() body: SendOtpDto) {
     return this.authService.sendOtp(body.mobile, body.role);
   }
 
+  // Defense in depth alongside AuthService.verifyOtp()'s new per-mobile
+  // attempt lockout (5 wrong guesses locks out that OTP entirely,
+  // regardless of IP) — this catches an attacker spreading guesses across
+  // many mobiles from one IP, which the per-mobile counter alone can't.
   @Post('verify-otp')
   @HttpCode(HttpStatus.OK)
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 10, ttl: 600_000 } })
   async verifyOtp(@Body() body: VerifyOtpDto) {
     return this.authService.verifyOtp(body.mobile, body.code, body.role);
   }
@@ -257,8 +269,14 @@ export class AuthController {
     return this.authService.register(body);
   }
 
+  // Password login had no brute-force defense of any kind — unlike OTP,
+  // there is no per-account attempt counter here (that would need a schema
+  // change on both Customer and Business), so this IP-scoped throttle is
+  // the primary mitigation, not a backstop.
   @Post('login')
   @HttpCode(HttpStatus.OK)
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 10, ttl: 600_000 } })
   async login(@Body() body: LoginDto) {
     return this.authService.login(body.email, body.password_hash);
   }

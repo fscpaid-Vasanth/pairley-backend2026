@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
@@ -18,7 +18,11 @@ import { NotificationService } from '../common/services/notification.service';
 describe('AuthService.verifyOtp', () => {
   let service: AuthService;
   let prisma: {
-    otpVerification: { findFirst: jest.Mock; deleteMany: jest.Mock };
+    otpVerification: {
+      findFirst: jest.Mock;
+      deleteMany: jest.Mock;
+      update: jest.Mock;
+    };
     customer: { findUnique: jest.Mock };
     business: { findUnique: jest.Mock };
   };
@@ -32,7 +36,11 @@ describe('AuthService.verifyOtp', () => {
 
   const buildService = async (configValues: Record<string, any> = {}) => {
     prisma = {
-      otpVerification: { findFirst: jest.fn(), deleteMany: jest.fn() },
+      otpVerification: {
+        findFirst: jest.fn(),
+        deleteMany: jest.fn(),
+        update: jest.fn().mockResolvedValue({}),
+      },
       customer: { findUnique: jest.fn().mockResolvedValue(null) },
       business: { findUnique: jest.fn().mockResolvedValue(null) },
     };
@@ -93,8 +101,10 @@ describe('AuthService.verifyOtp', () => {
 
   it('rejects an expired OTP record even if the code matches', async () => {
     prisma.otpVerification.findFirst.mockResolvedValue({
+      id: 'otp-1',
       mobile: '9999999999',
       code: '482913',
+      attempts: 0,
       expires_at: new Date(Date.now() - 60_000),
       created_at: new Date(),
     });
@@ -105,8 +115,10 @@ describe('AuthService.verifyOtp', () => {
 
   it('accepts a real, unexpired OTP record and consumes it', async () => {
     prisma.otpVerification.findFirst.mockResolvedValue({
+      id: 'otp-1',
       mobile: '9999999999',
       code: '482913',
+      attempts: 0,
       expires_at: new Date(Date.now() + 60_000),
       created_at: new Date(),
     });
@@ -116,6 +128,107 @@ describe('AuthService.verifyOtp', () => {
     expect(result.exists).toBe(false);
     expect(prisma.otpVerification.deleteMany).toHaveBeenCalledWith({
       where: { mobile: '9999999999' },
+    });
+  });
+
+  // Brute-force lockout — this is the actual security fix. Previously this
+  // endpoint had no attempt limiting at all: a 6-digit OTP (1,000,000
+  // combinations) could be guessed without any backend resistance.
+  describe('brute-force lockout', () => {
+    it('increments the attempt counter on a wrong code', async () => {
+      // The real query differs by call: verifyOtp first looks up the
+      // latest OTP by {mobile} alone (to check the lockout), then
+      // separately by {mobile, code} (to check the guess itself). A plain
+      // mockResolvedValue can't distinguish the two, so this simulates the
+      // real DB's behaviour — a wrong code genuinely finds no row.
+      const latestOtp = {
+        id: 'otp-1',
+        mobile: '9999999999',
+        code: '482913',
+        attempts: 2,
+        expires_at: new Date(Date.now() + 60_000),
+        created_at: new Date(),
+      };
+      prisma.otpVerification.findFirst.mockImplementation(({ where }) =>
+        Promise.resolve('code' in where ? null : latestOtp),
+      );
+
+      await expect(
+        service.verifyOtp('9999999999', '000000'),
+      ).rejects.toThrow('Invalid OTP code');
+
+      expect(prisma.otpVerification.update).toHaveBeenCalledWith({
+        where: { id: 'otp-1' },
+        data: { attempts: { increment: 1 } },
+      });
+    });
+
+    it('increments the attempt counter on an expired-but-correct code too', async () => {
+      prisma.otpVerification.findFirst.mockResolvedValue({
+        id: 'otp-1',
+        mobile: '9999999999',
+        code: '482913',
+        attempts: 1,
+        expires_at: new Date(Date.now() - 60_000),
+        created_at: new Date(),
+      });
+
+      await expect(
+        service.verifyOtp('9999999999', '482913'),
+      ).rejects.toThrow('OTP code has expired');
+
+      expect(prisma.otpVerification.update).toHaveBeenCalledWith({
+        where: { id: 'otp-1' },
+        data: { attempts: { increment: 1 } },
+      });
+    });
+
+    it('locks out once MAX_OTP_ATTEMPTS is reached, before even checking the code', async () => {
+      prisma.otpVerification.findFirst.mockResolvedValue({
+        id: 'otp-1',
+        mobile: '9999999999',
+        code: '482913',
+        attempts: 5,
+        expires_at: new Date(Date.now() + 60_000),
+        created_at: new Date(),
+      });
+
+      // The correct code, submitted after the 5th failure — must still be
+      // rejected, and rejected for a different, clearer reason than "wrong
+      // code", so the caller knows a fresh OTP is required.
+      await expect(
+        service.verifyOtp('9999999999', '482913'),
+      ).rejects.toThrow(ForbiddenException);
+      await expect(
+        service.verifyOtp('9999999999', '482913'),
+      ).rejects.toThrow('Too many failed attempts');
+    });
+
+    it('clears the locked-out OTP so the next sendOtp starts clean', async () => {
+      prisma.otpVerification.findFirst.mockResolvedValue({
+        id: 'otp-1',
+        mobile: '9999999999',
+        code: '482913',
+        attempts: 5,
+        expires_at: new Date(Date.now() + 60_000),
+        created_at: new Date(),
+      });
+
+      await expect(
+        service.verifyOtp('9999999999', '482913'),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(prisma.otpVerification.deleteMany).toHaveBeenCalledWith({
+        where: { mobile: '9999999999' },
+      });
+    });
+
+    it('does not lock out a mobile that has never requested an OTP', async () => {
+      prisma.otpVerification.findFirst.mockResolvedValue(null);
+      await expect(
+        service.verifyOtp('9999999999', '000000'),
+      ).rejects.toThrow('Invalid OTP code');
+      expect(prisma.otpVerification.update).not.toHaveBeenCalled();
     });
   });
 });

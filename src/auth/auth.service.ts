@@ -1,6 +1,7 @@
 import {
   Injectable,
   BadRequestException,
+  ForbiddenException,
   NotFoundException,
   UnauthorizedException,
   OnModuleInit,
@@ -20,6 +21,14 @@ import {
   Source,
 } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
+
+// Same limit and mechanics as ClaimRequestService's MAX_OTP_ATTEMPTS — this
+// is the primary login/registration OTP flow, which previously had no
+// attempt limiting at all (unlike the claim flow, which has always had
+// this). A 6-digit OTP is 1,000,000 combinations; with no limiter, nothing
+// stopped an unthrottled guess-every-code attack against a known mobile
+// number.
+const MAX_OTP_ATTEMPTS = 5;
 
 @Injectable()
 export class AuthService implements OnModuleInit {
@@ -146,6 +155,21 @@ export class AuthService implements OnModuleInit {
         `[MERCHANT OTP PILOT] Accepted fixed pilot code for ${mobile} (MERCHANT_OTP_MODE=test)`,
       );
     } else {
+      // Brute-force lockout, checked against the most recent OTP issued for
+      // this mobile — before the code comparison, so a locked-out attacker
+      // learns nothing from further guesses. Mirrors
+      // ClaimRequestService.verifyOtpAndTransfer()'s exact pattern.
+      const latest = await this.prisma.otpVerification.findFirst({
+        where: { mobile },
+        orderBy: { created_at: 'desc' },
+      });
+      if (latest && latest.attempts >= MAX_OTP_ATTEMPTS) {
+        await this.prisma.otpVerification.deleteMany({ where: { mobile } });
+        throw new ForbiddenException(
+          'Too many failed attempts. Please request a new OTP.',
+        );
+      }
+
       // Only a real, unexpired OTP issued via sendOtp() is accepted — no
       // hardcoded or test-number bypass. In mock mode (USE_MOCK_OTP=true) the
       // random code is logged server-side by OtpService.sendOtp() instead of
@@ -155,11 +179,16 @@ export class AuthService implements OnModuleInit {
         orderBy: { created_at: 'desc' },
       });
 
-      if (!record) {
-        throw new BadRequestException('Invalid OTP code');
-      }
-      if (new Date() > record.expires_at) {
-        throw new BadRequestException('OTP code has expired');
+      if (!record || new Date() > record.expires_at) {
+        if (latest) {
+          await this.prisma.otpVerification.update({
+            where: { id: latest.id },
+            data: { attempts: { increment: 1 } },
+          });
+        }
+        throw new BadRequestException(
+          !record ? 'Invalid OTP code' : 'OTP code has expired',
+        );
       }
       await this.prisma.otpVerification.deleteMany({ where: { mobile } });
     }
