@@ -11,6 +11,7 @@ import { CategoryController } from './taxonomy/category.controller';
 import { CLOUD_STORAGE_PROVIDER } from './services/storage-providers/cloud-storage-provider.interface';
 import { S3StorageProvider } from './services/storage-providers/s3-storage.provider';
 import { FirebaseStorageProvider } from './services/storage-providers/firebase-storage.provider';
+import { WhatsappModule } from '../whatsapp/whatsapp.module';
 
 // Storage Migration Phase 1 — STORAGE_PROVIDER selects which
 // CloudStorageProvider StorageService gets, once, at DI-container build
@@ -52,7 +53,7 @@ const firebaseStorageProviderFactory = {
 
 @Global()
 @Module({
-  imports: [ConfigModule, TerminusModule],
+  imports: [ConfigModule, TerminusModule, WhatsappModule],
   controllers: [CategoryController],
   providers: [
     OtpService,

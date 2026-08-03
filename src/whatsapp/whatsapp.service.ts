@@ -187,6 +187,32 @@ export class WhatsappService {
     return this.configService.get<string>('WHATSAPP_PHONE_NUMBER_ID');
   }
 
+  // Launch-readiness finding: lead-alert WhatsApp sends were silently
+  // failing in production (WhatsAppMessage rows with status FAILED, error
+  // "No WhatsApp token configured") with no way to see that short of
+  // reading a failed send's logged error after the fact. Side-effect-free
+  // — mirrors NotificationService.getFcmStatus() — for
+  // GET /admin/system-health to surface config presence without sending
+  // anything or exposing the token/ID values themselves.
+  getStatus(): {
+    configured: boolean;
+    phoneNumberIdSet: boolean;
+    tokenSet: boolean;
+  } {
+    const phoneNumberIdSet = !!this.configService.get<string>(
+      'WHATSAPP_PHONE_NUMBER_ID',
+    );
+    const tokenSet = !!(
+      this.configService.get<string>('WHATSAPP_API_TOKEN') ||
+      this.configService.get<string>('WHATSAPP_ACCESS_TOKEN')
+    );
+    return {
+      configured: phoneNumberIdSet && tokenSet,
+      phoneNumberIdSet,
+      tokenSet,
+    };
+  }
+
   /**
    * Send a plain text message via WhatsApp Cloud API. Returns a result
    * instead of throwing — callers (OTP send, lead alerts) need to log

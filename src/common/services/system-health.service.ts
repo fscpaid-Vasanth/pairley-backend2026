@@ -3,6 +3,7 @@ import { HealthCheckService, PrismaHealthIndicator } from '@nestjs/terminus';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StorageService } from './storage.service';
 import { NotificationService } from './notification.service';
+import { WhatsappService } from '../../whatsapp/whatsapp.service';
 import { getRelease } from '../utils/release.util';
 
 export interface SystemHealthResult {
@@ -27,6 +28,15 @@ export interface SystemHealthResult {
     credentialSource: 'env' | 'file' | 'none';
     projectId?: string;
   };
+  // Launch-readiness finding — lead-alert WhatsApp sends were failing
+  // silently in production (missing WHATSAPP_API_TOKEN/PHONE_NUMBER_ID)
+  // with no visibility short of reading a failed send's logged error
+  // after the fact. Never exposes the token/ID values themselves.
+  whatsapp: {
+    configured: boolean;
+    phoneNumberIdSet: boolean;
+    tokenSet: boolean;
+  };
   release: string;
   environment: string;
   serverTime: string;
@@ -45,6 +55,7 @@ export class SystemHealthService {
     private readonly prismaService: PrismaService,
     private readonly storageService: StorageService,
     private readonly notificationService: NotificationService,
+    private readonly whatsappService: WhatsappService,
   ) {}
 
   async check(): Promise<SystemHealthResult> {
@@ -74,6 +85,7 @@ export class SystemHealthService {
       storageProvider: storageResult.mode,
       ...(storageResult.error ? { storageError: storageResult.error } : {}),
       notifications,
+      whatsapp: this.whatsappService.getStatus(),
       release,
       environment,
       serverTime,

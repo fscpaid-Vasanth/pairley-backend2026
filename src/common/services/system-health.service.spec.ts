@@ -35,6 +35,13 @@ describe('SystemHealthService', () => {
         .fn()
         .mockResolvedValue({ mode: 'mock', credentialSource: 'none' }),
     };
+    const whatsappService = {
+      getStatus: jest.fn().mockReturnValue({
+        configured: false,
+        phoneNumberIdSet: false,
+        tokenSet: false,
+      }),
+    };
 
     return new SystemHealthService(
       health as any,
@@ -42,6 +49,7 @@ describe('SystemHealthService', () => {
       prismaService as any,
       storageService as any,
       notificationService as any,
+      whatsappService as any,
     );
   };
 
@@ -106,6 +114,20 @@ describe('SystemHealthService', () => {
     expect(result.notifications).toEqual({
       mode: 'mock',
       credentialSource: 'none',
+    });
+  });
+
+  it('surfaces the whatsapp block from WhatsappService.getStatus() unchanged', async () => {
+    const service = makeService({
+      databaseOk: true,
+      storageResult: { ok: true, mode: 'firebase' },
+    });
+    const result = await service.check();
+
+    expect(result.whatsapp).toEqual({
+      configured: false,
+      phoneNumberIdSet: false,
+      tokenSet: false,
     });
   });
 });
