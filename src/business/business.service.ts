@@ -9,6 +9,8 @@ import {
   WhatsappService,
   resolveLeadWhatsappNumber,
 } from '../whatsapp/whatsapp.service';
+import { FileValidationService } from '../discovery/file-validation.service';
+import { FileImportError } from '../discovery/file-import.errors';
 
 @Injectable()
 export class BusinessService {
@@ -16,7 +18,29 @@ export class BusinessService {
     private prisma: PrismaService,
     private storageService: StorageService,
     private whatsappService: WhatsappService,
+    private fileValidationService: FileValidationService,
   ) {}
+
+  // uploadDocuments/uploadMedia previously trusted the client-declared
+  // mimetype alone before handing a file straight to storage — every other
+  // upload path in the app (Offer Publisher, claim evidence) validates the
+  // actual file content first via this same magic-byte check. These are
+  // merchant KYC documents (Aadhaar/PAN/GST); the inconsistency mattered
+  // more here than almost anywhere else in the app.
+  private validateUpload(file: Express.Multer.File): void {
+    try {
+      this.fileValidationService.validate({
+        mimetype: file.mimetype,
+        size: file.size,
+        buffer: file.buffer,
+      });
+    } catch (err) {
+      if (err instanceof FileImportError) {
+        throw new BadRequestException(`File rejected: ${err.message}`);
+      }
+      throw err;
+    }
+  }
 
   async getProfile(businessId: string) {
     const business = await this.prisma.business.findUnique({
@@ -234,6 +258,18 @@ export class BusinessService {
       throw new NotFoundException('Business not found');
     }
 
+    // Validated before any upload starts — reject-before-processing, same
+    // discipline as ClaimRequestService.requestClaim's evidence handling,
+    // so this never ends up with some files uploaded and one silently
+    // rejected partway through a batch.
+    for (const file of [
+      ...(files.logo ?? []),
+      ...(files.cover_image ?? []),
+      ...(files.gallery ?? []),
+    ]) {
+      this.validateUpload(file);
+    }
+
     const updateData: any = {};
 
     if (files.logo && files.logo.length > 0) {
@@ -300,6 +336,17 @@ export class BusinessService {
     });
     if (!business) {
       throw new NotFoundException('Business not found');
+    }
+
+    // Validated before any upload starts — see uploadMedia's identical
+    // comment above.
+    for (const file of [
+      ...(files.shop_photo ?? []),
+      ...(files.aadhaar ?? []),
+      ...(files.pan ?? []),
+      ...(files.gst ?? []),
+    ]) {
+      this.validateUpload(file);
     }
 
     const updateData: any = {};
