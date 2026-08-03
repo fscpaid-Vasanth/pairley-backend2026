@@ -14,6 +14,7 @@ import { OtpService } from '../common/services/otp.service';
 import { StorageService } from '../common/services/storage.service';
 import { NotificationService } from '../common/services/notification.service';
 import { CategoryService } from '../common/taxonomy/category.service';
+import { GoogleTokenVerifierService } from './google-token-verifier.service';
 import {
   VerificationStatus,
   SubscriptionStatus,
@@ -42,6 +43,7 @@ export class AuthService implements OnModuleInit {
     private notificationService: NotificationService,
     private configService: ConfigService,
     private categoryService: CategoryService,
+    private googleTokenVerifier: GoogleTokenVerifierService,
   ) {}
 
   // Merchant Onboarding Pilot — MERCHANT_OTP_MODE=test replaces real SMS OTP
@@ -365,8 +367,18 @@ export class AuthService implements OnModuleInit {
   }
 
   async googleUpsert(data: any) {
-    const { role, mobile, email, name, ...extra } = data;
-    const searchEmail = email?.trim().toLowerCase() || null;
+    const { role, mobile, name, idToken, ...extra } = data;
+
+    // Launch-audit Critical finding: this previously trusted `data.email`
+    // (the request body) as proof of identity, so anyone who knew a
+    // customer's or merchant's email could log in as them with a plain
+    // POST — no password, no Google token, nothing. The verified token's
+    // own email claim is now the only source of truth for who this is;
+    // the client-supplied `email` field (still present in `extra` for the
+    // new-user-registration branches below) is never used for lookup.
+    const verified = await this.googleTokenVerifier.verifyIdToken(idToken);
+    const searchEmail = verified.email.trim().toLowerCase();
+    const email = searchEmail;
 
     // 1. First, check if the email exists in Customer table (regardless of the requested role)
     let customer: any = null;

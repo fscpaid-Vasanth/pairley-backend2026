@@ -147,6 +147,14 @@ class RegisterDto {
 }
 
 class GoogleAuthDto {
+  // Proof the caller actually completed Firebase/Google sign-in — verified
+  // server-side in AuthService.googleUpsert() via GoogleTokenVerifierService.
+  // `email` below is kept for the DTO shape the frontend already sends, but
+  // is never trusted for identity — see that verification for why.
+  @IsString()
+  @IsNotEmpty()
+  idToken: string;
+
   @IsString()
   @IsNotEmpty()
   name: string;

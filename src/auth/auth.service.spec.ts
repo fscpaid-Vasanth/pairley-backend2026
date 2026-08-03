@@ -1,5 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
@@ -8,6 +12,23 @@ import { PrismaService } from '../prisma/prisma.service';
 import { OtpService } from '../common/services/otp.service';
 import { StorageService } from '../common/services/storage.service';
 import { NotificationService } from '../common/services/notification.service';
+import { GoogleTokenVerifierService } from './google-token-verifier.service';
+
+// GoogleTokenVerifierService is always provided as a jest mock below (its
+// real implementation is never instantiated in this file), but auth.service
+// ts still statically imports it for DI metadata, which would otherwise pull
+// in the real firebase-admin/auth module — and transitively jose's
+// ESM-only webapi build, which Jest/ts-jest cannot parse. Same convention
+// firebase-storage.provider.spec.ts already uses for firebase-admin/app
+// and firebase-admin/storage.
+jest.mock('firebase-admin/app', () => ({
+  initializeApp: jest.fn(),
+  getApps: jest.fn().mockReturnValue([]),
+  cert: jest.fn(),
+}));
+jest.mock('firebase-admin/auth', () => ({
+  getAuth: jest.fn(),
+}));
 
 /**
  * Regression coverage for the OTP verification security fix: no code should
@@ -70,6 +91,12 @@ describe('AuthService.verifyOtp', () => {
         // Real instance — CategoryService is pure, dependency-free and
         // covered by its own spec, so the genuine normalisation runs here.
         CategoryService,
+        // Not exercised by this describe block's tests (none call
+        // googleUpsert) — present only because AuthService now requires it.
+        {
+          provide: GoogleTokenVerifierService,
+          useValue: { verifyIdToken: jest.fn() },
+        },
       ],
     }).compile();
 
@@ -294,6 +321,12 @@ describe('AuthService — Merchant OTP pilot bypass', () => {
         // Real instance — CategoryService is pure, dependency-free and
         // covered by its own spec, so the genuine normalisation runs here.
         CategoryService,
+        // Not exercised by this describe block's tests (none call
+        // googleUpsert) — present only because AuthService now requires it.
+        {
+          provide: GoogleTokenVerifierService,
+          useValue: { verifyIdToken: jest.fn() },
+        },
       ],
     }).compile();
 
@@ -385,5 +418,106 @@ describe('AuthService — Merchant OTP pilot bypass', () => {
     ).rejects.toThrow(BadRequestException);
     const result = await service.verifyOtp('9000000001', '5678', 'Business');
     expect(result.exists).toBe(false);
+  });
+});
+
+/**
+ * Launch-audit Critical finding: POST /auth/google previously trusted the
+ * request body's `email` field as identity proof and used it to look up /
+ * log in to any existing account — a full account-takeover-by-email
+ * vulnerability, since nothing tied the caller to a real Google sign-in.
+ * These tests lock in that the verified Firebase ID token's own email claim
+ * is now the only thing ever used for account lookup, never the body.
+ */
+describe('AuthService.googleUpsert — account takeover fix', () => {
+  let service: AuthService;
+  let prisma: {
+    customer: { findUnique: jest.Mock; update: jest.Mock };
+    business: { findUnique: jest.Mock; update: jest.Mock };
+  };
+  let verifyIdToken: jest.Mock;
+
+  const buildService = async () => {
+    prisma = {
+      customer: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        update: jest.fn(),
+      },
+      business: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        update: jest.fn(),
+      },
+    };
+    verifyIdToken = jest.fn();
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        AuthService,
+        { provide: PrismaService, useValue: prisma },
+        {
+          provide: JwtService,
+          useValue: { sign: jest.fn().mockReturnValue('signed-jwt') },
+        },
+        { provide: OtpService, useValue: {} },
+        { provide: StorageService, useValue: {} },
+        {
+          provide: NotificationService,
+          useValue: { sendNotification: jest.fn() },
+        },
+        {
+          provide: ConfigService,
+          useValue: { get: jest.fn((_key: string, def?: any) => def) },
+        },
+        CategoryService,
+        { provide: GoogleTokenVerifierService, useValue: { verifyIdToken } },
+      ],
+    }).compile();
+
+    return module.get(AuthService);
+  };
+
+  beforeEach(async () => {
+    service = await buildService();
+  });
+
+  it('rejects the request outright when idToken verification fails, before any DB lookup', async () => {
+    verifyIdToken.mockRejectedValue(new UnauthorizedException('Invalid or expired Google credential'));
+
+    await expect(
+      service.googleUpsert({
+        idToken: 'forged-or-missing',
+        name: 'Attacker',
+        email: 'victim@pairley-qa.internal',
+        role: 'Customer',
+      }),
+    ).rejects.toThrow(UnauthorizedException);
+
+    expect(prisma.customer.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('looks up the account using the verified token email, ignoring a spoofed body email', async () => {
+    verifyIdToken.mockResolvedValue({
+      email: 'real-owner@pairley-qa.internal',
+      uid: 'firebase-uid-123',
+    });
+    prisma.customer.findUnique.mockResolvedValue({
+      id: 'cust-1',
+      email: 'real-owner@pairley-qa.internal',
+      mobile: '9000011111',
+    });
+
+    const result = await service.googleUpsert({
+      idToken: 'genuine-token-for-real-owner',
+      name: 'Someone',
+      // The attempted spoof: claims to be a totally different account.
+      email: 'victim@pairley-qa.internal',
+      role: 'Customer',
+    });
+
+    expect(prisma.customer.findUnique).toHaveBeenCalledWith({
+      where: { email: 'real-owner@pairley-qa.internal' },
+    });
+    expect(result.exists).toBe(true);
+    expect(result.user.id).toBe('cust-1');
   });
 });

@@ -4,6 +4,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { GoogleTokenVerifierService } from './google-token-verifier.service';
 
 @Module({
   imports: [
@@ -29,7 +30,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtAuthGuard],
+  providers: [AuthService, JwtAuthGuard, GoogleTokenVerifierService],
   exports: [AuthService, JwtAuthGuard, JwtModule],
 })
 export class AuthModule {}
