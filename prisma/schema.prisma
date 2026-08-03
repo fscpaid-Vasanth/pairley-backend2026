@@ -435,6 +435,16 @@ model Offer {
   // pass in-memory on an already-narrowed (status/category-filtered) set,
   // but this index is in place for when catalog size makes that worth it.
   @@index([geo_lat, geo_lng])
+  // Launch-readiness scalability finding: neither status nor business_id
+  // was indexed. Invisible at today's ~25-row catalog, but /offers/list
+  // (filtered to status=ACTIVE by default) is the single most-hit query in
+  // the app and was heading for a full table scan at the 10,000-offer
+  // launch target. [status] covers the public listing; [business_id,
+  // status] covers both the merchant's own-offers views and the admin
+  // per-business filter in one index ([status] alone would still require a
+  // second lookup for those).
+  @@index([status])
+  @@index([business_id, status])
   @@map("offers")
 }
 
