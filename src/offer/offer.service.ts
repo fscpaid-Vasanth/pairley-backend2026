@@ -23,6 +23,8 @@ import {
   WhatsappService,
   resolveLeadWhatsappNumber,
 } from '../whatsapp/whatsapp.service';
+import { FileValidationService } from '../discovery/file-validation.service';
+import { FileImportError } from '../discovery/file-import.errors';
 import {
   OfferType,
   OfferStatus,
@@ -107,7 +109,28 @@ export class OfferService {
     private whatsappService: WhatsappService,
     private configService: ConfigService,
     private categoryService: CategoryService,
+    private fileValidationService: FileValidationService,
   ) {}
+
+  // uploadOfferMedia previously trusted the client-declared mimetype alone
+  // before handing a file straight to storage — the Offer Publisher tool and
+  // merchant KYC uploads both already validate actual file content the same
+  // way (see business.service.ts's validateUpload for the identical fix);
+  // this was the one remaining offer-image upload path without it.
+  private validateUpload(file: Express.Multer.File): void {
+    try {
+      this.fileValidationService.validate({
+        mimetype: file.mimetype,
+        size: file.size,
+        buffer: file.buffer,
+      });
+    } catch (err) {
+      if (err instanceof FileImportError) {
+        throw new BadRequestException(`File rejected: ${err.message}`);
+      }
+      throw err;
+    }
+  }
 
   async createOffer(businessId: string, data: any) {
     // 1. Verify business is verified
@@ -315,6 +338,11 @@ export class OfferService {
     if (offer.business_id !== businessId) {
       throw new ForbiddenException('You do not own this offer');
     }
+
+    // Validate every file in the batch before uploading any — a bad file
+    // later in the batch must not leave earlier ones already persisted.
+    if (files.cover_image?.[0]) this.validateUpload(files.cover_image[0]);
+    for (const file of files.gallery ?? []) this.validateUpload(file);
 
     const updateData: any = {};
 

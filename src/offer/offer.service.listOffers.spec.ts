@@ -25,6 +25,7 @@ describe('OfferService.listOffers — pagination cap', () => {
       {} as any, // WhatsappService
       { get: jest.fn() } as any, // ConfigService
       {} as any, // CategoryService — unused by listOffers
+      {} as any, // FileValidationService — unused by listOffers
     );
 
   it('caps an unbounded request (status=ALL) at the default page size', async () => {
