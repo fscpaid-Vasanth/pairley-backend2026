@@ -24,6 +24,7 @@ import { WhatsappModule } from './whatsapp/whatsapp.module';
 import { DiscoveryModule } from './discovery/discovery.module';
 import { OfferPublisherModule } from './offer-publisher/offer-publisher.module';
 import { EntitlementModule } from './entitlement/entitlement.module';
+import { AiOffersFromOnlineModule } from './ai-offers-from-online/ai-offers-from-online.module';
 
 @Module({
   imports: [
@@ -54,6 +55,7 @@ import { EntitlementModule } from './entitlement/entitlement.module';
     DiscoveryModule,
     OfferPublisherModule,
     EntitlementModule,
+    AiOffersFromOnlineModule,
   ],
   controllers: [AppController],
   providers: [

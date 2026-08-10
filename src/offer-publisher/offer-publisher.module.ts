@@ -14,5 +14,10 @@ import { OfferPublisherService } from './offer-publisher.service';
     // apply to an Offer Publisher image as to any other upload.
     FileValidationService,
   ],
+  // OfferPublisherService exported so AiOffersFromOnlineModule (2026-08-09) can
+  // delegate to its approveDraft/publishDraft rather than reimplementing
+  // Pairley's own required-field validation and DRAFT->APPROVED->ACTIVE
+  // transition a second time.
+  exports: [OfferPublisherService],
 })
 export class OfferPublisherModule {}

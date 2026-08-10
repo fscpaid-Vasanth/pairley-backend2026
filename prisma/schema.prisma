@@ -997,3 +997,104 @@ model EntitlementGrant {
   @@index([business_id, expires_at])
   @@map("entitlement_grants")
 }
+
+// ---------------------------------------------------------------------------
+// AI Offers From Online (2026-08-09) — the intake queue for the standalone
+// "Pairley AI Offer Collector" microservice. Deliberately a STAGING table,
+// separate from Business/Offer.
+//
+// Ownership split (final architecture): the Collector owns the CREATIVE —
+// it extracts, resolves price/address, generates the banner, and a human
+// approves that banner THERE. Pairley Admin owns the PUBLISHING DECISION —
+// "should this offer become a Pairley deal?". Nothing here becomes a real
+// Business/Offer until an admin explicitly matches/creates a merchant and
+// publishes.
+//
+// Consequence for this table: an offer only ever arrives here once it is
+// fully ready — a resolved price and an approved banner are preconditions
+// of export, enforced on the Collector side. That is why offer_price and
+// banner_image_url are NOT NULL here: the database enforces the same
+// architectural rule the Collector's export gate does. Pairley never calls
+// back into the Collector to complete an incomplete offer.
+// ---------------------------------------------------------------------------
+
+enum AiOfferFromOnlineStatus {
+  PENDING_ADMIN_REVIEW // exported from the Collector with an approved banner — awaiting an admin's publishing decision
+  MERCHANT_MATCHED // matched_business_id or created_business_id is set, not yet published
+  READY_TO_PUBLISH // real Offer(DRAFT) created and approved through Offer Publisher — see created_offer_id
+  PUBLISHED // the real Offer has been flipped ACTIVE and is live on the customer site
+  FAILED // a publish attempt failed (validation, etc.) — retryable, see failure_reason
+  REJECTED // an admin declined it; never became a real Business/Offer
+}
+
+model AiOfferFromOnline {
+  id                 String                  @id @default(uuid())
+  // The Collector's own Offer.id — the upsert key. Re-exporting the same
+  // Collector offer updates this row rather than creating a duplicate
+  // queue entry (idempotency rule, enforced via upsert).
+  collector_offer_id String                  @unique
+  status             AiOfferFromOnlineStatus @default(PENDING_ADMIN_REVIEW)
+
+  // Set once an admin picks an existing business (PUT :id/match-business)
+  // or explicitly creates one (PUT :id/create-merchant) — never set by the
+  // Collector, never set automatically at export time.
+  matched_business_id String?
+  created_business_id String?
+  // Set once the real Pairley Offer exists. Also the publish-idempotency
+  // key: a second publish of the same queue row reuses this Offer rather
+  // than creating a duplicate.
+  created_offer_id String?
+
+  // Merchant fields, as exported by the Collector (AI-extracted/resolved)
+  // and editable by the admin thereafter — corrections flow through
+  // PATCH :id and are reflected in field_provenance, never silently
+  // overwriting what the Collector originally sent.
+  merchant_name String
+  mobile        String?
+  whatsapp      String?
+  category      String?
+  // Always non-null: the Collector never exports a blank address; it's
+  // either explicit/matched, or the literal "Bangalore" default (see the
+  // Collector's pairley-resolution.service.ts). A missing address never
+  // blocks anything — it defaults, it does not stall.
+  address String
+  city    String?
+
+  offer_title String
+  description String?
+  // Nullable: genuinely absent on many source offers. Never fabricated.
+  original_price Float?
+  // NOT NULL by architecture: a missing price blocks banner generation in
+  // the Collector, which in turn blocks export. An offer without a price
+  // can never reach this table.
+  offer_price    Float
+  validity_start DateTime?
+  validity_end   DateTime?
+  terms          String?
+
+  // NOT NULL by architecture: the exact banner a human approved in the
+  // Collector. Copied byte-for-byte into this app's own storage at export
+  // time (not referenced from the Collector's storage) so it survives
+  // independently. Pairley NEVER regenerates, redesigns, or replaces this
+  // image — it is the canonical exported artifact.
+  banner_image_url String
+
+  source_url  String?
+  source_type String?
+
+  // Per-field provenance the Collector already computed
+  // (AI_EXTRACTED | AI_RESOLVED | DEFAULTED_CITY), extended with
+  // ADMIN_ENTERED / MERCHANT_CONFIRMED as an admin edits fields here —
+  // never silently overwritten, so a value's origin is always answerable.
+  field_provenance Json?
+
+  rejection_reason String?
+  /// Why the last publish attempt failed. Cleared on a successful retry.
+  failure_reason   String?
+
+  exported_at DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  @@index([status])
+  @@map("ai_offers_from_online")
+}
