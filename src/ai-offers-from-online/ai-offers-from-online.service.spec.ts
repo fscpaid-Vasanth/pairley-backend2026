@@ -112,11 +112,56 @@ describe('AiOffersFromOnlineService', () => {
       expect(prisma.aiOfferFromOnline.upsert.mock.calls[0][0].create.banner_image_url).toBe('https://storage.example/banner.png');
     });
 
-    it('REFUSES an export with no offer price — a price-less offer cannot have an approved banner and must be corrected in the Collector', async () => {
+    it('a normal price offer is accepted with its real offerPrice stored', async () => {
+      prisma.aiOfferFromOnline.findUnique.mockResolvedValue(null);
+      prisma.aiOfferFromOnline.upsert.mockImplementation(({ create }: any) => Promise.resolve({ id: 'aio-1', ...create }));
+
+      await service.importExportedOffer(VALID_EXPORT, BANNER_FILE);
+
+      expect(prisma.aiOfferFromOnline.upsert.mock.calls[0][0].create.offer_price).toBe(6000);
+    });
+
+    // offerPrice is nullable (2026-08-11): the Collector's own readiness gate
+    // already decided these offers may export with no numeric price, because
+    // each carries a verified non-price promotional mechanic instead. Pairley
+    // has no visibility into WHICH mechanic applied — from this endpoint's
+    // perspective every one of these is identical (offerPrice omitted,
+    // accepted, stored null) — but each is written out explicitly so the
+    // contract this endpoint honors is traceable case by case, not just
+    // asserted once in the abstract.
+    it.each([
+      ['a stated-percentage-only offer (no original price, no numeric offer price)', { offerTitle: 'Flat 30% Off All Services' }],
+      ['a BOGO offer', { offerTitle: 'Buy One Get One Free on all pastries' }],
+      ['a BOGT offer', { offerTitle: 'Buy 2 Pairs, Get Your 3rd Free' }],
+      ['an explicit free-benefit offer', { offerTitle: 'Sign up today and get one month free' }],
+    ])('accepts %s exported with offerPrice omitted, storing offer_price as null — never 0, never guessed', async (_label, overrides) => {
+      prisma.aiOfferFromOnline.findUnique.mockResolvedValue(null);
+      prisma.aiOfferFromOnline.upsert.mockImplementation(({ create }: any) => Promise.resolve({ id: 'aio-1', ...create }));
+
+      const result = await service.importExportedOffer({ ...VALID_EXPORT, ...overrides, offerPrice: undefined }, BANNER_FILE);
+
+      expect(result.status).toBe(AiOfferFromOnlineStatus.PENDING_ADMIN_REVIEW);
+      expect(prisma.aiOfferFromOnline.upsert.mock.calls[0][0].create.offer_price).toBeNull();
+      expect(prisma.aiOfferFromOnline.upsert.mock.calls[0][0].create.offer_price).not.toBe(0);
+    });
+
+    it('REFUSES an export whose offerPrice is present but not a positive number — malformed input, not a legitimate non-price offer', async () => {
       prisma.aiOfferFromOnline.findUnique.mockResolvedValue(null);
 
-      await expect(service.importExportedOffer({ ...VALID_EXPORT, offerPrice: undefined }, BANNER_FILE)).rejects.toThrow(/offerPrice is required/);
+      await expect(service.importExportedOffer({ ...VALID_EXPORT, offerPrice: 0 }, BANNER_FILE)).rejects.toThrow(/must be a positive number/);
+      await expect(service.importExportedOffer({ ...VALID_EXPORT, offerPrice: -50 }, BANNER_FILE)).rejects.toThrow(/must be a positive number/);
+      await expect(service.importExportedOffer({ ...VALID_EXPORT, offerPrice: NaN }, BANNER_FILE)).rejects.toThrow(/must be a positive number/);
       expect(prisma.aiOfferFromOnline.upsert).not.toHaveBeenCalled();
+    });
+
+    it('preserves originalPrice when supplied alongside a non-price qualifying offer (e.g. a percentage calculated off a real original price elsewhere, or just informational)', async () => {
+      prisma.aiOfferFromOnline.findUnique.mockResolvedValue(null);
+      prisma.aiOfferFromOnline.upsert.mockImplementation(({ create }: any) => Promise.resolve({ id: 'aio-1', ...create }));
+
+      await service.importExportedOffer({ ...VALID_EXPORT, offerPrice: undefined, originalPrice: 1000 }, BANNER_FILE);
+
+      expect(prisma.aiOfferFromOnline.upsert.mock.calls[0][0].create.original_price).toBe(1000);
+      expect(prisma.aiOfferFromOnline.upsert.mock.calls[0][0].create.offer_price).toBeNull();
     });
 
     it('REFUSES a first export with no banner — Pairley never receives a banner-less offer to complete itself', async () => {

@@ -103,20 +103,26 @@ export class AiOffersFromOnlineService {
   // ---------------------------------------------------------------------
 
   /**
-   * Accepts one fully-ready offer exported from the Collector. Both the
-   * approved banner and a resolved offer price are REQUIRED: the Collector
-   * cannot generate a banner without a price, nor export without an
-   * approved banner, so an export missing either is a contract violation
-   * and is refused outright rather than queued as a half-record.
+   * Accepts one fully-ready offer exported from the Collector. An approved
+   * banner is REQUIRED — the Collector cannot export without one, so a
+   * missing banner is a contract violation, refused outright rather than
+   * queued as a half-record.
+   *
+   * offerPrice is NOT required (2026-08-11): the Collector's own readiness
+   * gate already decided this offer may export with no numeric price,
+   * because it carries a verified non-price promotional mechanic instead
+   * (stated discount percentage, BOGO, BOGT, or an explicit free-benefit
+   * offer) — Pairley trusts that decision rather than re-deriving it, the
+   * same way it already trusts "an approved banner exists" without asking
+   * why. When offerPrice IS provided, it must be a real, positive number —
+   * never 0, never NaN from a malformed submission.
    */
   async importExportedOffer(fields: ExportedOfferFields, bannerFile: Express.Multer.File | undefined) {
     if (!fields.merchantName?.trim()) throw new BadRequestException('merchantName is required');
     if (!fields.offerTitle?.trim()) throw new BadRequestException('offerTitle is required');
     if (!fields.address?.trim()) throw new BadRequestException('address is required');
-    if (fields.offerPrice == null || Number.isNaN(fields.offerPrice)) {
-      throw new BadRequestException(
-        'offerPrice is required — an offer without a resolved price cannot have an approved banner and must be corrected in the AI Offer Collector before export.',
-      );
+    if (fields.offerPrice !== undefined && (Number.isNaN(fields.offerPrice) || fields.offerPrice <= 0)) {
+      throw new BadRequestException('offerPrice, when provided, must be a positive number — omit it entirely for a non-price promotional offer.');
     }
 
     const existing = await this.prisma.aiOfferFromOnline.findUnique({
@@ -147,7 +153,12 @@ export class AiOffersFromOnlineService {
       offer_title: fields.offerTitle,
       description: fields.description || null,
       original_price: fields.originalPrice ?? null,
-      offer_price: fields.offerPrice,
+      // Explicit null, not left undefined: every other field here always
+      // reflects the Collector's latest submission (the same rule
+      // merchant_name/category/address etc. already follow) — offer_price
+      // is no exception. Only banner_image_url is deliberately preserved
+      // across a re-export that omits it, for the documented reason above.
+      offer_price: fields.offerPrice ?? null,
       validity_start: fields.validityStart ? new Date(fields.validityStart) : null,
       validity_end: fields.validityEnd ? new Date(fields.validityEnd) : null,
       terms: fields.terms || null,
@@ -311,6 +322,21 @@ export class AiOffersFromOnlineService {
     if (!businessId) {
       throw new BadRequestException(
         'No business matched or created for this offer yet — match an existing business or create the merchant first',
+      );
+    }
+
+    // offer_price is nullable on THIS queue table (2026-08-11 — non-price
+    // promotional offers may sit here awaiting an admin decision), but the
+    // real, live Offer this method creates still requires a real price —
+    // that column is unchanged. Rather than widen the live Offer schema (a
+    // much larger change nobody asked for), a promotional offer simply
+    // needs a price entered here first via PATCH :id (`correct`, which
+    // already accepts offerPrice) before it can go live. This is a business
+    // decision an admin makes explicitly, not something to guess at publish
+    // time.
+    if (offer.offer_price == null) {
+      throw new BadRequestException(
+        'This offer has no price yet — it exported as a promotional offer (discount %/BOGO/BOGT/free-benefit) with no fixed rupee price. Enter a price for it (PATCH this offer) before publishing, since a live Pairley offer must show one.',
       );
     }
 

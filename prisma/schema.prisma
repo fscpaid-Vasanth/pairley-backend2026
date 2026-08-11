@@ -1011,11 +1011,17 @@ model EntitlementGrant {
 // publishes.
 //
 // Consequence for this table: an offer only ever arrives here once it is
-// fully ready — a resolved price and an approved banner are preconditions
-// of export, enforced on the Collector side. That is why offer_price and
-// banner_image_url are NOT NULL here: the database enforces the same
-// architectural rule the Collector's export gate does. Pairley never calls
-// back into the Collector to complete an incomplete offer.
+// fully ready — an approved banner is always a precondition of export,
+// enforced on the Collector side, which is why banner_image_url is NOT
+// NULL here. offer_price is deliberately NULLABLE (2026-08-11): the
+// Collector's own readiness gate allows an offer through with no numeric
+// price when it carries a verified non-price promotional mechanic instead
+// (a stated discount percentage, BOGO, BOGT, or an explicit free-benefit
+// offer) — never a guess, never a fabricated 0. Pairley trusts that gate
+// exactly as it already trusts "an approved banner exists" — it does not
+// re-derive which offers qualify; that decision belongs to the Collector.
+// Pairley never calls back into the Collector to complete an incomplete
+// offer.
 // ---------------------------------------------------------------------------
 
 enum AiOfferFromOnlineStatus {
@@ -1064,10 +1070,13 @@ model AiOfferFromOnline {
   description String?
   // Nullable: genuinely absent on many source offers. Never fabricated.
   original_price Float?
-  // NOT NULL by architecture: a missing price blocks banner generation in
-  // the Collector, which in turn blocks export. An offer without a price
-  // can never reach this table.
-  offer_price    Float
+  // Nullable (2026-08-11): null means this offer qualified for export via a
+  // non-price promotional mechanic (stated percentage / BOGO / BOGT /
+  // free-benefit) rather than a resolved rupee price — see the model doc
+  // comment above. Never 0, never guessed: a genuinely priced offer always
+  // carries its real price here, enforced in the service layer, not just
+  // this column's type.
+  offer_price    Float?
   validity_start DateTime?
   validity_end   DateTime?
   terms          String?
