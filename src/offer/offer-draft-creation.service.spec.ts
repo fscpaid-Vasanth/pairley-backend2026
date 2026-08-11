@@ -3,7 +3,7 @@ import { CategoryService } from '../common/taxonomy/category.service';
 
 describe('OfferDraftCreationService', () => {
   let prisma: {
-    business: { findUnique: jest.Mock; create: jest.Mock };
+    business: { findUnique: jest.Mock; findMany: jest.Mock; create: jest.Mock };
     $transaction: jest.Mock;
   };
   let service: OfferDraftCreationService;
@@ -12,6 +12,7 @@ describe('OfferDraftCreationService', () => {
     prisma = {
       business: {
         findUnique: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
         create: jest.fn().mockResolvedValue({ id: 'biz-1' }),
       },
       $transaction: jest.fn(),
@@ -82,6 +83,74 @@ describe('OfferDraftCreationService', () => {
       expect(data.city).toBe('');
       expect(data.state).toBe('');
       expect(data.pincode).toBe('');
+    });
+
+    // 2026-08-11 — added so the AI Offer Review flow (which routinely has no
+    // mobile, or one the merchant never registered with Pairley before)
+    // doesn't spawn a second UNCLAIMED Business for a merchant already on
+    // file. Deliberately conservative: exact string match only, after
+    // normalization done in JS, never a fuzzy/partial match.
+    describe('name + city matching (no mobile match)', () => {
+      it('reuses an existing business on an exact normalized name + city match', async () => {
+        prisma.business.findMany.mockResolvedValue([
+          { id: 'existing-biz', business_name: 'Shapes Gym', city: 'Bangalore' },
+        ]);
+
+        const result = await service.matchOrCreateBusiness({
+          merchantName: 'Shapes Gym',
+          city: 'Bangalore',
+        });
+
+        expect(result).toEqual({ businessId: 'existing-biz', created: false });
+        expect(prisma.business.create).not.toHaveBeenCalled();
+      });
+
+      it('normalizes case and whitespace on both sides before comparing', async () => {
+        prisma.business.findMany.mockResolvedValue([
+          { id: 'existing-biz', business_name: '  shapes   gym ', city: 'BANGALORE' },
+        ]);
+
+        const result = await service.matchOrCreateBusiness({
+          merchantName: 'Shapes Gym',
+          city: 'Bangalore',
+        });
+
+        expect(result).toEqual({ businessId: 'existing-biz', created: false });
+      });
+
+      it('does NOT merge a same-named business in a DIFFERENT city — creates a new one instead', async () => {
+        prisma.business.findMany.mockResolvedValue([
+          { id: 'other-city-biz', business_name: 'Shapes Gym', city: 'Mumbai' },
+        ]);
+
+        const result = await service.matchOrCreateBusiness({
+          merchantName: 'Shapes Gym',
+          city: 'Bangalore',
+        });
+
+        expect(result.created).toBe(true);
+        expect(result.businessId).toBe('biz-1');
+      });
+
+      it('skips the name+city lookup entirely when city is not supplied — no signal, no guess', async () => {
+        const result = await service.matchOrCreateBusiness({ merchantName: 'Shapes Gym' });
+
+        expect(prisma.business.findMany).not.toHaveBeenCalled();
+        expect(result.created).toBe(true);
+      });
+
+      it('an exact mobile match still wins over name+city — mobile is checked first', async () => {
+        prisma.business.findUnique.mockResolvedValue({ id: 'mobile-match' });
+
+        const result = await service.matchOrCreateBusiness({
+          merchantName: 'Shapes Gym',
+          mobile: '9876543210',
+          city: 'Bangalore',
+        });
+
+        expect(result).toEqual({ businessId: 'mobile-match', created: false });
+        expect(prisma.business.findMany).not.toHaveBeenCalled();
+      });
     });
 
     it('uses the given transaction client instead of the default prisma instance when provided', async () => {

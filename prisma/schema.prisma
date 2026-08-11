@@ -1031,6 +1031,7 @@ enum AiOfferFromOnlineStatus {
   PUBLISHED // the real Offer has been flipped ACTIVE and is live on the customer site
   FAILED // a publish attempt failed (validation, etc.) — retryable, see failure_reason
   REJECTED // an admin declined it; never became a real Business/Offer
+  DUPLICATE_SUPPRESSED // a HIGH-confidence duplicate of an existing live Offer — publish refused automatically; see duplicate_of_offer_id/duplicate_score/duplicate_reasons. Never became a real Business/Offer.
 }
 
 model AiOfferFromOnline {
@@ -1100,6 +1101,20 @@ model AiOfferFromOnline {
   rejection_reason String?
   /// Why the last publish attempt failed. Cleared on a successful retry.
   failure_reason   String?
+
+  // Duplicate detection, run automatically at publish() time (never at
+  // export/import time). Plain scalar, not a Prisma relation — mirrors
+  // matched_business_id/created_business_id/created_offer_id above, which
+  // are also unenforced references on this table. Populated ONLY on a
+  // HIGH-confidence (Tier 1 or Tier 2) finding, which suppresses the
+  // publish outright (status -> DUPLICATE_SUPPRESSED); a MEDIUM finding
+  // publishes normally and records its advisory relationship on the real
+  // Offer's own (already-existing) duplicate_* fields instead, so this
+  // queue table only ever carries the blocking decision, never a second
+  // copy of an advisory one.
+  duplicate_of_offer_id String?
+  duplicate_score       Float?
+  duplicate_reasons     String[] @default([])
 
   exported_at DateTime @default(now())
   updated_at  DateTime @updatedAt

@@ -1,6 +1,9 @@
 import { AiOfferFromOnlineStatus, OfferStatus } from '@prisma/client';
 import { AiOffersFromOnlineService } from './ai-offers-from-online.service';
 import { CategoryService } from '../common/taxonomy/category.service';
+import { DuplicateCheckResult } from './duplicate-detection.service';
+
+const LOW: DuplicateCheckResult = { confidence: 'LOW', duplicateOfferId: null, score: null, reasons: [] };
 
 function makeOffer(overrides: Record<string, unknown> = {}) {
   return {
@@ -50,6 +53,7 @@ describe('AiOffersFromOnlineService', () => {
   let storage: { uploadFile: jest.Mock };
   let draftCreation: { matchOrCreateBusiness: jest.Mock };
   let offerPublisherService: { approveDraft: jest.Mock; publishDraft: jest.Mock; searchBusinesses: jest.Mock };
+  let duplicateDetection: { check: jest.Mock };
   let service: AiOffersFromOnlineService;
 
   beforeEach(() => {
@@ -78,6 +82,7 @@ describe('AiOffersFromOnlineService', () => {
       publishDraft: jest.fn().mockResolvedValue({}),
       searchBusinesses: jest.fn().mockResolvedValue([]),
     };
+    duplicateDetection = { check: jest.fn().mockResolvedValue(LOW) };
 
     service = new AiOffersFromOnlineService(
       prisma,
@@ -85,6 +90,7 @@ describe('AiOffersFromOnlineService', () => {
       draftCreation as any,
       offerPublisherService as any,
       new CategoryService(),
+      duplicateDetection as any,
     );
   });
 
@@ -231,11 +237,16 @@ describe('AiOffersFromOnlineService', () => {
   });
 
   describe('publish', () => {
-    it('refuses to publish until a merchant has been matched or created', async () => {
+    it('auto-resolves a business via matchOrCreateBusiness when no admin match/create happened first — merchant onboarding is never a prerequisite', async () => {
       prisma.aiOfferFromOnline.findUnique.mockResolvedValue(makeOffer({ matched_business_id: null, created_business_id: null }));
+      prisma.offer.create.mockResolvedValue({ id: 'real-offer-1' });
+      prisma.aiOfferFromOnline.update.mockImplementation(({ data }: any) => Promise.resolve({ id: 'aio-1', ...data }));
 
-      await expect(service.publish('aio-1')).rejects.toThrow(/No business matched or created/);
-      expect(prisma.offer.create).not.toHaveBeenCalled();
+      const result = await service.publish('aio-1');
+
+      expect(draftCreation.matchOrCreateBusiness).toHaveBeenCalledTimes(1);
+      expect(prisma.offer.create.mock.calls[0][0].data.business_id).toBe('new-biz-1');
+      expect(result.status).toBe(AiOfferFromOnlineStatus.PUBLISHED);
     });
 
     it('creates the real Offer, delegates approve+publish to Offer Publisher, and lands PUBLISHED', async () => {
@@ -294,15 +305,84 @@ describe('AiOffersFromOnlineService', () => {
       prisma.aiOfferFromOnline.findUnique.mockResolvedValue(makeOffer({ status: AiOfferFromOnlineStatus.PUBLISHED, matched_business_id: 'biz-1' }));
       await expect(service.publish('aio-1')).rejects.toThrow(/already published/);
     });
+
+    describe('duplicate detection gate', () => {
+      it('HIGH confidence: blocks — no Offer created, queue row marked DUPLICATE_SUPPRESSED with the finding recorded for audit', async () => {
+        prisma.aiOfferFromOnline.findUnique.mockResolvedValue(makeOffer({ matched_business_id: 'biz-1' }));
+        duplicateDetection.check.mockResolvedValue({
+          confidence: 'HIGH',
+          duplicateOfferId: 'existing-offer-9',
+          score: 0.95,
+          reasons: ['same_business', 'same_mechanic:PERCENTAGE_OFF', 'title_similarity:1.00'],
+        });
+        prisma.aiOfferFromOnline.update.mockImplementation(({ data }: any) => Promise.resolve({ id: 'aio-1', ...data }));
+
+        const result = await service.publish('aio-1');
+
+        expect(prisma.offer.create).not.toHaveBeenCalled();
+        expect(offerPublisherService.approveDraft).not.toHaveBeenCalled();
+        expect(result.status).toBe(AiOfferFromOnlineStatus.DUPLICATE_SUPPRESSED);
+        expect(result.duplicate_of_offer_id).toBe('existing-offer-9');
+        expect(result.duplicate_score).toBe(0.95);
+        expect(result.duplicate_reasons).toContain('same_mechanic:PERCENTAGE_OFF');
+      });
+
+      it('MEDIUM confidence: publishes normally, and records the advisory relationship on the new Offer\'s own duplicate_* fields', async () => {
+        prisma.aiOfferFromOnline.findUnique.mockResolvedValue(makeOffer({ matched_business_id: 'biz-1' }));
+        duplicateDetection.check.mockResolvedValue({
+          confidence: 'MEDIUM',
+          duplicateOfferId: 'existing-offer-5',
+          score: 0.55,
+          reasons: ['same_business', 'title_similarity:0.30'],
+        });
+        prisma.offer.create.mockResolvedValue({ id: 'real-offer-1' });
+        prisma.aiOfferFromOnline.update.mockImplementation(({ data }: any) => Promise.resolve({ id: 'aio-1', ...data }));
+
+        const result = await service.publish('aio-1');
+
+        expect(prisma.offer.create).toHaveBeenCalledTimes(1);
+        expect(prisma.offer.create.mock.calls[0][0].data.duplicate_of_offer_id).toBe('existing-offer-5');
+        expect(prisma.offer.create.mock.calls[0][0].data.duplicate_score).toBe(0.55);
+        expect(offerPublisherService.approveDraft).toHaveBeenCalledWith('real-offer-1');
+        expect(result.status).toBe(AiOfferFromOnlineStatus.PUBLISHED);
+      });
+
+      it('LOW confidence: publishes cleanly with no duplicate fields written', async () => {
+        prisma.aiOfferFromOnline.findUnique.mockResolvedValue(makeOffer({ matched_business_id: 'biz-1' }));
+        duplicateDetection.check.mockResolvedValue({ confidence: 'LOW', duplicateOfferId: null, score: null, reasons: [] });
+        prisma.offer.create.mockResolvedValue({ id: 'real-offer-1' });
+        prisma.aiOfferFromOnline.update.mockImplementation(({ data }: any) => Promise.resolve({ id: 'aio-1', ...data }));
+
+        await service.publish('aio-1');
+
+        expect(prisma.offer.create.mock.calls[0][0].data.duplicate_of_offer_id).toBeUndefined();
+        expect(prisma.offer.create.mock.calls[0][0].data.duplicate_score).toBeUndefined();
+      });
+
+      it('does not re-run the duplicate check when resuming an already-created Offer (idempotency)', async () => {
+        prisma.aiOfferFromOnline.findUnique.mockResolvedValue(makeOffer({ matched_business_id: 'biz-1', created_offer_id: 'real-offer-1' }));
+        prisma.offer.findUnique.mockResolvedValue({ id: 'real-offer-1' });
+        prisma.aiOfferFromOnline.update.mockImplementation(({ data }: any) => Promise.resolve({ id: 'aio-1', ...data }));
+
+        await service.publish('aio-1');
+
+        expect(duplicateDetection.check).not.toHaveBeenCalled();
+      });
+    });
   });
 
   describe('publishSelected — bulk, independent per offer', () => {
-    it('publishes the successes even when others fail — no rollback of the ones that worked', async () => {
-      prisma.aiOfferFromOnline.findUnique.mockImplementation(({ where }: any) => {
-        if (where.id === 'ok-1' || where.id === 'ok-2') return Promise.resolve(makeOffer({ id: where.id, matched_business_id: 'biz-1' }));
-        if (where.id === 'no-merchant') return Promise.resolve(makeOffer({ id: where.id, matched_business_id: null, created_business_id: null }));
-        return Promise.resolve(makeOffer({ id: where.id, matched_business_id: 'biz-1' }));
-      });
+    it('publishes the successes even when others fail or are flagged as duplicates — no rollback of the ones that worked', async () => {
+      prisma.aiOfferFromOnline.findUnique.mockImplementation(({ where }: any) =>
+        Promise.resolve(makeOffer({ id: where.id, matched_business_id: where.id === 'dup-1' ? 'biz-2' : 'biz-1' })),
+      );
+      duplicateDetection.check.mockImplementation(({ businessId }: any) =>
+        Promise.resolve(
+          businessId === 'biz-2'
+            ? { confidence: 'HIGH', duplicateOfferId: 'existing-9', score: 0.9, reasons: ['same_business'] }
+            : LOW,
+        ),
+      );
       prisma.offer.create.mockResolvedValue({ id: 'real-offer-x' });
       prisma.aiOfferFromOnline.update.mockImplementation(({ data }: any) => Promise.resolve({ id: 'aio-1', ...data }));
       offerPublisherService.publishDraft.mockImplementation(() => {
@@ -311,33 +391,38 @@ describe('AiOffersFromOnlineService', () => {
         return Promise.resolve({});
       });
 
-      const result = await service.publishSelected(['ok-1', 'ok-2', 'no-merchant', 'bad-1']);
+      const result = await service.publishSelected(['ok-1', 'ok-2', 'dup-1', 'bad-1']);
 
       expect(result.published).toBe(2);
-      expect(result.needsMerchant).toBe(1);
+      expect(result.duplicate).toBe(1);
       expect(result.failed).toBe(1);
       expect(result.results).toHaveLength(4);
-      expect(result.results.find((r) => r.id === 'no-merchant')!.outcome).toBe('NEEDS_MERCHANT');
+      expect(result.results.find((r) => r.id === 'dup-1')!.outcome).toBe('DUPLICATE');
       expect(result.results.find((r) => r.id === 'bad-1')!.outcome).toBe('FAILED');
       expect(result.results.find((r) => r.id === 'bad-1')!.error).toMatch(/missing: cover image/);
     });
 
-    it('marks a genuinely failed offer FAILED with a reason so it stays retryable, but does NOT mark a needs-merchant one failed', async () => {
+    it('marks a genuinely failed offer FAILED with a reason so it stays retryable, but does NOT mark a duplicate-flagged one failed', async () => {
       prisma.aiOfferFromOnline.findUnique.mockImplementation(({ where }: any) =>
-        Promise.resolve(makeOffer({ id: where.id, matched_business_id: where.id === 'no-merchant' ? null : 'biz-1' })),
+        Promise.resolve(makeOffer({ id: where.id, matched_business_id: where.id === 'dup-1' ? 'biz-2' : 'biz-1' })),
+      );
+      duplicateDetection.check.mockImplementation(({ businessId }: any) =>
+        Promise.resolve(
+          businessId === 'biz-2' ? { confidence: 'HIGH', duplicateOfferId: 'existing-9', score: 0.9, reasons: [] } : LOW,
+        ),
       );
       prisma.offer.create.mockResolvedValue({ id: 'real-offer-x' });
       prisma.aiOfferFromOnline.update.mockImplementation(({ data }: any) => Promise.resolve({ id: 'aio-1', ...data }));
       offerPublisherService.approveDraft.mockRejectedValueOnce(new Error('Cannot approve — missing: description'));
 
-      await service.publishSelected(['bad-1', 'no-merchant']);
+      await service.publishSelected(['bad-1', 'dup-1']);
 
       const failedUpdate = prisma.aiOfferFromOnline.update.mock.calls.find(
         (c: any) => c[0].data.status === AiOfferFromOnlineStatus.FAILED,
       );
       expect(failedUpdate).toBeDefined();
       expect(failedUpdate[0].data.failure_reason).toMatch(/missing: description/);
-      // Exactly one FAILED write — the needs-merchant offer is not marked failed.
+      // Exactly one FAILED write — the duplicate-flagged offer is not marked failed.
       expect(
         prisma.aiOfferFromOnline.update.mock.calls.filter((c: any) => c[0].data.status === AiOfferFromOnlineStatus.FAILED),
       ).toHaveLength(1);

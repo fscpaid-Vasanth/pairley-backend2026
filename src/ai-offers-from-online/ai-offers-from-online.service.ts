@@ -10,6 +10,7 @@ import { StorageService } from '../common/services/storage.service';
 import { OfferDraftCreationService } from '../offer/offer-draft-creation.service';
 import { OfferPublisherService } from '../offer-publisher/offer-publisher.service';
 import { CategoryService } from '../common/taxonomy/category.service';
+import { AiOfferDuplicateDetectionService } from './duplicate-detection.service';
 
 const BANNER_FOLDER = 'ai-offers-from-online/banners';
 
@@ -48,7 +49,7 @@ export interface CorrectOfferFields {
 }
 
 /** The outcome of one offer inside a bulk Publish Selected run. */
-export type BulkPublishOutcome = 'PUBLISHED' | 'NEEDS_MERCHANT' | 'FAILED';
+export type BulkPublishOutcome = 'PUBLISHED' | 'DUPLICATE' | 'FAILED';
 
 export interface BulkPublishItemResult {
   id: string;
@@ -59,7 +60,7 @@ export interface BulkPublishItemResult {
 
 export interface BulkPublishResult {
   published: number;
-  needsMerchant: number;
+  duplicate: number;
   failed: number;
   results: BulkPublishItemResult[];
 }
@@ -83,8 +84,20 @@ const TERMINAL_STATUSES: AiOfferFromOnlineStatus[] = [
  * approved banner bytes are the canonical artifact.
  *
  * Creating a queue row never touches Business/Offer. Only publish() does
- * that, and only after a human has explicitly matched an existing business
- * or created a new one.
+ * that.
+ *
+ * Merchant onboarding is NOT a publishing prerequisite (2026-08-11):
+ * publish() uses an admin's explicit match/create-merchant choice when one
+ * was made, and otherwise auto-resolves a business itself via
+ * matchOrCreateBusiness — reusing an existing business on an exact
+ * mobile or (normalized name + normalized city) match, or creating a new
+ * UNCLAIMED one from this offer's own extracted fields. No phone
+ * verification, KYC, GST, or claim is ever required first; UNCLAIMED is
+ * already this codebase's normal, fully-supported "AI-imported, no owner
+ * yet" state (see BusinessStatus, ClaimRequestService, and the
+ * customer-facing "Is this your business? Claim it" prompt — none of that
+ * changes here). A HIGH-confidence duplicate (AiOfferDuplicateDetectionService)
+ * still blocks publish and never touches Business/Offer either.
  */
 @Injectable()
 export class AiOffersFromOnlineService {
@@ -96,6 +109,7 @@ export class AiOffersFromOnlineService {
     private readonly draftCreation: OfferDraftCreationService,
     private readonly offerPublisherService: OfferPublisherService,
     private readonly categoryService: CategoryService,
+    private readonly duplicateDetection: AiOfferDuplicateDetectionService,
   ) {}
 
   // ---------------------------------------------------------------------
@@ -298,15 +312,18 @@ export class AiOffersFromOnlineService {
   // ---------------------------------------------------------------------
 
   /**
-   * Takes one queued offer all the way live: creates the real Offer(DRAFT)
-   * against the admin-chosen business, then hands it to the SAME Offer
+   * Takes one queued offer all the way live: resolves a business (an
+   * admin's explicit match/create-merchant choice if one was made,
+   * otherwise auto-resolved — see class doc), runs the duplicate check,
+   * then creates the real Offer(DRAFT) and hands it to the SAME Offer
    * Publisher logic every other offer goes through (approveDraft applies
    * its missing-field validation, publishDraft flips it ACTIVE) — never
    * reimplemented here, so the existing Offer Publisher state machine is
    * untouched.
    *
    * Idempotent: an offer that already produced a Pairley Offer reuses it
-   * rather than creating a duplicate.
+   * rather than creating a duplicate (and does not re-run the duplicate
+   * check — that only ever gates the FIRST creation of the real Offer).
    */
   async publish(id: string) {
     const offer = await this.load(id);
@@ -318,11 +335,25 @@ export class AiOffersFromOnlineService {
       throw new BadRequestException('Cannot publish a rejected offer');
     }
 
-    const businessId = offer.matched_business_id ?? offer.created_business_id;
+    let businessId = offer.matched_business_id ?? offer.created_business_id;
     if (!businessId) {
-      throw new BadRequestException(
-        'No business matched or created for this offer yet — match an existing business or create the merchant first',
-      );
+      // No admin match/create decision yet — auto-resolve rather than
+      // block. matchOrCreateBusiness reuses an exact-mobile or
+      // exact-normalized-name+city match if one exists, otherwise creates
+      // a brand-new UNCLAIMED business from this offer's own extracted
+      // fields. Never fake data, never KYC, never a claim requirement.
+      const resolved = await this.draftCreation.matchOrCreateBusiness({
+        merchantName: offer.merchant_name,
+        mobile: offer.mobile,
+        category: offer.category,
+        address: offer.address,
+        city: offer.city,
+      });
+      businessId = resolved.businessId;
+      await this.prisma.aiOfferFromOnline.update({
+        where: { id },
+        data: { created_business_id: businessId, status: AiOfferFromOnlineStatus.MERCHANT_MATCHED },
+      });
     }
 
     // offer_price is nullable on THIS queue table (2026-08-11 — non-price
@@ -349,6 +380,33 @@ export class AiOffersFromOnlineService {
     }
 
     if (!offerId) {
+      const duplicate = await this.duplicateDetection.check({
+        businessId,
+        offerTitle: offer.offer_title,
+        description: offer.description,
+        terms: offer.terms,
+        originalPrice: offer.original_price,
+        offerPrice: offer.offer_price,
+        sourceUrl: offer.source_url,
+      });
+
+      // HIGH confidence only: block, and keep the decision on THIS queue
+      // row (never touching Business/Offer) so it stays auditable — a
+      // MEDIUM finding below is recorded on the real Offer instead, since
+      // one gets created either way.
+      if (duplicate.confidence === 'HIGH') {
+        return this.prisma.aiOfferFromOnline.update({
+          where: { id },
+          data: {
+            status: AiOfferFromOnlineStatus.DUPLICATE_SUPPRESSED,
+            duplicate_of_offer_id: duplicate.duplicateOfferId,
+            duplicate_score: duplicate.score,
+            duplicate_reasons: duplicate.reasons,
+            failure_reason: null,
+          },
+        });
+      }
+
       const now = new Date();
       const thirtyDaysOut = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
@@ -375,6 +433,18 @@ export class AiOffersFromOnlineService {
           source: Source.ADMIN,
           original_import_url: offer.source_url,
           original_import_source: offer.source_type,
+          // MEDIUM confidence: publish proceeds, but the advisory
+          // relationship is recorded on the Offer's own pre-existing
+          // duplicate_* fields (Module 11 Phase 2) rather than blocking —
+          // "recommendation only, never auto-merged", exactly as those
+          // fields were originally documented to mean.
+          ...(duplicate.confidence === 'MEDIUM'
+            ? {
+                duplicate_of_offer_id: duplicate.duplicateOfferId,
+                duplicate_score: duplicate.score,
+                duplicate_reasons: duplicate.reasons,
+              }
+            : {}),
         },
       });
       offerId = created.id;
@@ -432,7 +502,9 @@ export class AiOffersFromOnlineService {
    * Publish Selected. Each offer is processed INDEPENDENTLY — one failure
    * never rolls back or blocks the others, so a 10-offer run that hits two
    * problems still publishes the other eight. Failures stay in the queue,
-   * marked FAILED with a reason, and remain retryable.
+   * marked FAILED with a reason, and remain retryable. A HIGH-confidence
+   * duplicate is not a failure — publish() itself returns normally with
+   * DUPLICATE_SUPPRESSED, surfaced here as its own outcome.
    */
   async publishSelected(ids: string[]): Promise<BulkPublishResult> {
     if (!ids?.length) throw new BadRequestException('Select at least one offer to publish');
@@ -442,37 +514,29 @@ export class AiOffersFromOnlineService {
     for (const id of ids) {
       try {
         const published = await this.publish(id);
-        results.push({ id, outcome: 'PUBLISHED', offerId: published.created_offer_id, error: null });
+        if (published.status === AiOfferFromOnlineStatus.DUPLICATE_SUPPRESSED) {
+          results.push({ id, outcome: 'DUPLICATE', offerId: null, error: null });
+        } else {
+          results.push({ id, outcome: 'PUBLISHED', offerId: published.created_offer_id, error: null });
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        // "No business matched" is an expected, actionable state, not a
-        // failure of the system — surfaced distinctly so the admin knows
-        // exactly which offers need a merchant decision.
-        const needsMerchant = message.includes('No business matched or created');
-        results.push({
-          id,
-          outcome: needsMerchant ? 'NEEDS_MERCHANT' : 'FAILED',
-          offerId: null,
-          error: message,
-        });
-
-        if (!needsMerchant) {
-          await this.prisma.aiOfferFromOnline
-            .update({ where: { id }, data: { status: AiOfferFromOnlineStatus.FAILED, failure_reason: message } })
-            .catch(() => undefined); // a bad id (already 404'd above) must not abort the rest of the batch
-        }
+        results.push({ id, outcome: 'FAILED', offerId: null, error: message });
+        await this.prisma.aiOfferFromOnline
+          .update({ where: { id }, data: { status: AiOfferFromOnlineStatus.FAILED, failure_reason: message } })
+          .catch(() => undefined); // a bad id (already 404'd above) must not abort the rest of the batch
         this.logger.warn(`Publish Selected: offer ${id} did not publish — ${message}`);
       }
     }
 
     const summary: BulkPublishResult = {
       published: results.filter((r) => r.outcome === 'PUBLISHED').length,
-      needsMerchant: results.filter((r) => r.outcome === 'NEEDS_MERCHANT').length,
+      duplicate: results.filter((r) => r.outcome === 'DUPLICATE').length,
       failed: results.filter((r) => r.outcome === 'FAILED').length,
       results,
     };
     this.logger.log(
-      `Publish Selected: ${summary.published} published, ${summary.needsMerchant} need a merchant, ${summary.failed} failed (of ${ids.length})`,
+      `Publish Selected: ${summary.published} published, ${summary.duplicate} flagged as duplicate, ${summary.failed} failed (of ${ids.length})`,
     );
     return summary;
   }
