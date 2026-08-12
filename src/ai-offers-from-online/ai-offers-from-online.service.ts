@@ -14,6 +14,15 @@ import { AiOfferDuplicateDetectionService } from './duplicate-detection.service'
 
 const BANNER_FOLDER = 'ai-offers-from-online/banners';
 
+// Shared verbatim between publish()'s real refusal and validateSelected()'s
+// dry-run preview, so a dry run never promises something the real publish
+// attempt then contradicts. This is a message about the OFFER TYPE's
+// pricing mechanic (promotional, no fixed ₹ amount stated by the source),
+// never a statement that BOGO/BOGT/free-benefit offers are themselves
+// disallowed — offer_type is untouched by this check, only offer_price is.
+const PRICE_REQUIRED_MESSAGE =
+  'PRICE REQUIRED: This promotional offer has no verified source price. Open source → verify price → patch offer → publish.';
+
 export interface ExportedOfferFields {
   collectorOfferId: string;
   merchantName: string;
@@ -63,6 +72,32 @@ export interface BulkPublishResult {
   duplicate: number;
   failed: number;
   results: BulkPublishItemResult[];
+}
+
+/** The outcome of one offer inside a dry-run validation pass — see validateSelected(). */
+export type ValidationOutcome = 'READY' | 'CATEGORY_FIXABLE' | 'PRICE_REQUIRED' | 'OTHER_FAILURE';
+
+export interface ValidationItemResult {
+  id: string;
+  outcome: ValidationOutcome;
+  /** Blocking reason, present for every non-READY outcome. */
+  message: string | null;
+  /**
+   * Informational only, never blocking: set on a READY item whose raw
+   * category text will be silently normalized at publish time (e.g. the
+   * Collector's "Restaurants/Buffets" resolving to "dining"), so an admin
+   * can see what happened without it counting against readiness.
+   */
+  categoryNote: string | null;
+}
+
+export interface DryRunValidationResult {
+  total: number;
+  readyToPublish: number;
+  categoryFixable: number;
+  priceRequired: number;
+  otherFailures: number;
+  items: ValidationItemResult[];
 }
 
 /** Terminal states — a re-export from the Collector must never silently resurrect one of these. */
@@ -212,10 +247,41 @@ export class AiOffersFromOnlineService {
   // List / detail / business search.
   // ---------------------------------------------------------------------
 
+  /**
+   * 2026-08-12 — attaches each row's linked business's claim status
+   * (business_status — UNCLAIMED/CLAIMED/etc.) so the admin grid can show
+   * it without a second round-trip per card. matched_business_id/
+   * created_business_id are plain scalar strings, not a formal Prisma
+   * relation (see the class doc), so this is a batched second query + an
+   * in-memory join — same pattern LeadService already uses for
+   * WhatsApp-message status.
+   */
   async list(status?: AiOfferFromOnlineStatus) {
-    return this.prisma.aiOfferFromOnline.findMany({
+    const offers = await this.prisma.aiOfferFromOnline.findMany({
       where: status ? { status } : undefined,
       orderBy: { exported_at: 'desc' },
+    });
+
+    const businessIds = [
+      ...new Set(
+        offers
+          .map((o) => o.matched_business_id ?? o.created_business_id)
+          .filter((id): id is string => !!id),
+      ),
+    ];
+    if (businessIds.length === 0) {
+      return offers.map((o) => ({ ...o, claim_status: null }));
+    }
+
+    const businesses = await this.prisma.business.findMany({
+      where: { id: { in: businessIds } },
+      select: { id: true, business_status: true },
+    });
+    const statusById = new Map(businesses.map((b) => [b.id, b.business_status]));
+
+    return offers.map((o) => {
+      const businessId = o.matched_business_id ?? o.created_business_id;
+      return { ...o, claim_status: businessId ? (statusById.get(businessId) ?? null) : null };
     });
   }
 
@@ -366,9 +432,7 @@ export class AiOffersFromOnlineService {
     // decision an admin makes explicitly, not something to guess at publish
     // time.
     if (offer.offer_price == null) {
-      throw new BadRequestException(
-        'This offer has no price yet — it exported as a promotional offer (discount %/BOGO/BOGT/free-benefit) with no fixed rupee price. Enter a price for it (PATCH this offer) before publishing, since a live Pairley offer must show one.',
-      );
+      throw new BadRequestException(PRICE_REQUIRED_MESSAGE);
     }
 
     // Reuse an Offer from a previous partial attempt rather than creating a
@@ -410,13 +474,26 @@ export class AiOffersFromOnlineService {
       const now = new Date();
       const thirtyDaysOut = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
+      // categoryService.normalizeForStorage() already resolves null/empty
+      // to 'general' without throwing (a legitimate, non-blocking state —
+      // see its own doc comment) and already carries the full deterministic
+      // alias/slug/display-name resolution logic; this only intercepts the
+      // genuine "no known mapping at all" case to give an admin a clearer,
+      // more actionable message than a raw 12-category enum dump.
+      let normalizedCategory: string;
+      try {
+        normalizedCategory = this.categoryService.normalizeForStorage(offer.category);
+      } catch {
+        throw new BadRequestException(this.categoryNotRecognizedMessage(offer.category));
+      }
+
       const created = await this.prisma.offer.create({
         data: {
           business_id: businessId,
           title: offer.offer_title,
           description: offer.description || '',
           offer_type: OfferType.STANDARD,
-          category: this.categoryService.normalizeForStorage(offer.category),
+          category: normalizedCategory,
           // Pairley's own placeholder for "no original price" — never a fact
           // this queue asserts (same convention Offer Publisher and
           // bulk-import both already use).
@@ -496,6 +573,75 @@ export class AiOffersFromOnlineService {
       where: { id },
       data: { status: AiOfferFromOnlineStatus.PUBLISHED, failure_reason: null },
     });
+  }
+
+  private categoryNotRecognizedMessage(raw: string | null): string {
+    const validKeys = this.categoryService.listSelectable().map((c) => c.key).join(', ');
+    return `Category normalization required: "${raw}" has no known Pairley mapping. An admin must correct this offer's category (PATCH) before publishing. Valid categories: ${validKeys}`;
+  }
+
+  /**
+   * Read-only classification used by both the dry run (validateSelected)
+   * and, implicitly, by publish() itself — the same precedence (terminal
+   * status, then price, then category) as publish()'s own checks, so a
+   * dry run never disagrees with what actually happens on publish. Never
+   * touches the database.
+   */
+  private classifyForPublish(offer: {
+    status: AiOfferFromOnlineStatus;
+    category: string | null;
+    offer_price: number | null;
+  }): Omit<ValidationItemResult, 'id'> {
+    if (TERMINAL_STATUSES.includes(offer.status)) {
+      return { outcome: 'OTHER_FAILURE', message: `Offer is already ${offer.status}`, categoryNote: null };
+    }
+    if (offer.offer_price == null) {
+      return { outcome: 'PRICE_REQUIRED', message: PRICE_REQUIRED_MESSAGE, categoryNote: null };
+    }
+    // Empty/null category is not a failure — normalizeForStorage() resolves
+    // it to 'general' at publish time, exactly like this check must mirror.
+    if (!offer.category?.trim()) {
+      return { outcome: 'READY', message: null, categoryNote: null };
+    }
+    const resolved = this.categoryService.normalize(offer.category);
+    if (!resolved) {
+      return { outcome: 'CATEGORY_FIXABLE', message: this.categoryNotRecognizedMessage(offer.category), categoryNote: null };
+    }
+    const categoryNote =
+      resolved !== offer.category ? `Category normalization required: ${offer.category} → ${resolved}` : null;
+    return { outcome: 'READY', message: null, categoryNote };
+  }
+
+  /**
+   * Dry-run validation — checks every selected offer against the same
+   * category/price rules publish() enforces, WITHOUT creating or changing
+   * anything (no Business, no Offer, no queue-row mutation). Meant to run
+   * before a real Publish Selected so an admin sees what will actually
+   * happen first, per offer, rather than discovering it one failed batch
+   * at a time.
+   */
+  async validateSelected(ids: string[]): Promise<DryRunValidationResult> {
+    if (!ids?.length) throw new BadRequestException('Select at least one offer to validate');
+
+    const items: ValidationItemResult[] = [];
+    for (const id of ids) {
+      try {
+        const offer = await this.load(id);
+        items.push({ id, ...this.classifyForPublish(offer) });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        items.push({ id, outcome: 'OTHER_FAILURE', message, categoryNote: null });
+      }
+    }
+
+    return {
+      total: items.length,
+      readyToPublish: items.filter((i) => i.outcome === 'READY').length,
+      categoryFixable: items.filter((i) => i.outcome === 'CATEGORY_FIXABLE').length,
+      priceRequired: items.filter((i) => i.outcome === 'PRICE_REQUIRED').length,
+      otherFailures: items.filter((i) => i.outcome === 'OTHER_FAILURE').length,
+      items,
+    };
   }
 
   /**

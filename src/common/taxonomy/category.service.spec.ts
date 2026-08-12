@@ -47,6 +47,39 @@ describe('CategoryService', () => {
       expect(service.normalize('salon')).toBe('beauty');
     });
 
+    // The AI Offer Collector's source-site category text arrives as
+    // slash-joined human labels ("Restaurants/Buffets", "Spa/Salon"), not
+    // Pairley's own taxonomy — these two were the actual "Unknown
+    // category" values logged in production on 2026-08-12, blocking 8 of
+    // 11 offers in one Publish Selected run.
+    it('resolves the AI Offer Collector\'s slash-joined category labels', () => {
+      expect(service.normalize('Restaurants/Buffets')).toBe('dining');
+      expect(service.normalize('Spa/Salon')).toBe('beauty');
+      expect(service.normalize('Fitness/Gym')).toBe('fitness');
+      expect(service.normalize('Shopping/Retail')).toBe('shopping');
+      expect(service.normalize('Travel/Tours')).toBe('tours');
+      expect(service.normalize('Education/Training')).toBe('education');
+    });
+
+    it('resolves the standalone forms making up the slash-joined labels above', () => {
+      expect(service.normalize('Buffet')).toBe('dining');
+      expect(service.normalize('Cafe')).toBe('dining');
+    });
+
+    // The remaining categories from the same mapping request already
+    // resolved before this fix, via the generic key/display-name matching
+    // above rather than a literal alias — asserted here so the full
+    // mapping table has one test each, not just the ones that needed a
+    // code change.
+    it('already resolved the rest of the requested mapping table via existing generic matching', () => {
+      expect(service.normalize('Entertainment')).toBe('entertainment');
+      expect(service.normalize('Subscription')).toBe('subscriptions');
+      expect(service.normalize('Adventure')).toBe('adventure');
+      expect(service.normalize('Home Services')).toBe('home-services');
+      expect(service.normalize('Healthcare')).toBe('healthcare');
+      expect(service.normalize('Coworking')).toBe('coworking');
+    });
+
     it('slugifies multi-word names into their hyphenated key', () => {
       expect(service.normalize('Home Services')).toBe('home-services');
     });

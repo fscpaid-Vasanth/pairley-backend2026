@@ -67,6 +67,7 @@ describe('AiOffersFromOnlineService', () => {
       },
       business: {
         findUnique: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([]),
         update: jest.fn().mockResolvedValue({}),
       },
       offer: {
@@ -92,6 +93,42 @@ describe('AiOffersFromOnlineService', () => {
       new CategoryService(),
       duplicateDetection as any,
     );
+  });
+
+  // 2026-08-12 — the admin grid's claim-status column. matched_business_id/
+  // created_business_id are plain scalar strings (no formal relation), so
+  // list() does its own batched second query + in-memory join.
+  describe('list — claim status', () => {
+    it('attaches the linked business\'s business_status as claim_status', async () => {
+      prisma.aiOfferFromOnline.findMany.mockResolvedValue([
+        makeOffer({ id: 'aio-1', matched_business_id: 'biz-1' }),
+        makeOffer({ id: 'aio-2', created_business_id: 'biz-2' }),
+      ]);
+      prisma.business.findMany.mockResolvedValue([
+        { id: 'biz-1', business_status: 'CLAIMED' },
+        { id: 'biz-2', business_status: 'UNCLAIMED' },
+      ]);
+
+      const result = await service.list();
+
+      expect(prisma.business.findMany).toHaveBeenCalledWith({
+        where: { id: { in: ['biz-1', 'biz-2'] } },
+        select: { id: true, business_status: true },
+      });
+      expect(result.find((o: any) => o.id === 'aio-1').claim_status).toBe('CLAIMED');
+      expect(result.find((o: any) => o.id === 'aio-2').claim_status).toBe('UNCLAIMED');
+    });
+
+    it('claim_status is null for an offer with no business matched/created yet, without querying business.findMany at all', async () => {
+      prisma.aiOfferFromOnline.findMany.mockResolvedValue([
+        makeOffer({ id: 'aio-1', matched_business_id: null, created_business_id: null }),
+      ]);
+
+      const result = await service.list();
+
+      expect(prisma.business.findMany).not.toHaveBeenCalled();
+      expect(result[0].claim_status).toBeNull();
+    });
   });
 
   describe('importExportedOffer — the "Export to Pairley" intake', () => {
@@ -368,6 +405,151 @@ describe('AiOffersFromOnlineService', () => {
 
         expect(duplicateDetection.check).not.toHaveBeenCalled();
       });
+    });
+  });
+
+  describe('category normalization — 2026-08-12 production fix', () => {
+    it.each([
+      ['Restaurants/Buffets', 'dining'],
+      ['Spa/Salon', 'beauty'],
+    ])('publishes an offer whose source category is "%s" by normalizing it to "%s"', async (raw, expected) => {
+      prisma.aiOfferFromOnline.findUnique.mockResolvedValue(makeOffer({ matched_business_id: 'biz-1', category: raw }));
+      prisma.offer.create.mockResolvedValue({ id: 'real-offer-1' });
+      prisma.aiOfferFromOnline.update.mockImplementation(({ data }: any) => Promise.resolve({ id: 'aio-1', ...data }));
+
+      const result = await service.publish('aio-1');
+
+      expect(prisma.offer.create.mock.calls[0][0].data.category).toBe(expected);
+      expect(result.status).toBe(AiOfferFromOnlineStatus.PUBLISHED);
+    });
+
+    it('still refuses a genuinely unrecognized category, with a clearer message than the raw taxonomy error', async () => {
+      prisma.aiOfferFromOnline.findUnique.mockResolvedValue(makeOffer({ matched_business_id: 'biz-1', category: 'quantum-widgets' }));
+
+      await expect(service.publish('aio-1')).rejects.toThrow(/Category normalization required.*quantum-widgets/);
+      expect(prisma.offer.create).not.toHaveBeenCalled();
+    });
+
+    it('retrying after a category failure creates exactly one Offer — the failed attempt left no orphan to duplicate', async () => {
+      const offer = makeOffer({ matched_business_id: 'biz-1', category: 'quantum-widgets', created_offer_id: null });
+      prisma.aiOfferFromOnline.findUnique.mockResolvedValue(offer);
+
+      await expect(service.publish('aio-1')).rejects.toThrow(/Category normalization required/);
+      expect(prisma.offer.create).not.toHaveBeenCalled();
+
+      // Admin corrects the category (PATCH) and retries.
+      prisma.aiOfferFromOnline.findUnique.mockResolvedValue({ ...offer, category: 'fitness' });
+      prisma.offer.create.mockResolvedValue({ id: 'real-offer-1' });
+      prisma.aiOfferFromOnline.update.mockImplementation(({ data }: any) => Promise.resolve({ id: 'aio-1', ...data }));
+
+      const result = await service.publish('aio-1');
+
+      expect(prisma.offer.create).toHaveBeenCalledTimes(1);
+      expect(result.status).toBe(AiOfferFromOnlineStatus.PUBLISHED);
+    });
+
+    it('a null/empty category still publishes as "general", never treated as a failure', async () => {
+      prisma.aiOfferFromOnline.findUnique.mockResolvedValue(makeOffer({ matched_business_id: 'biz-1', category: null }));
+      prisma.offer.create.mockResolvedValue({ id: 'real-offer-1' });
+      prisma.aiOfferFromOnline.update.mockImplementation(({ data }: any) => Promise.resolve({ id: 'aio-1', ...data }));
+
+      const result = await service.publish('aio-1');
+
+      expect(prisma.offer.create.mock.calls[0][0].data.category).toBe('general');
+      expect(result.status).toBe(AiOfferFromOnlineStatus.PUBLISHED);
+    });
+  });
+
+  describe('price required — promotional offers never get an invented price', () => {
+    it('BOGO/BOGT/BTGT-style titles with a verified price publish normally — offer type is never the reason for refusal', async () => {
+      for (const title of ['Buffet ₹999 + Buy 1 Get 1', 'Couple package ₹2,999', 'Buy 2 Get 3rd Free — ₹1,499 for the set']) {
+        prisma.aiOfferFromOnline.findUnique.mockResolvedValue(makeOffer({ matched_business_id: 'biz-1', offer_title: title, offer_price: 999 }));
+        prisma.offer.create.mockResolvedValue({ id: 'real-offer-1' });
+        prisma.aiOfferFromOnline.update.mockImplementation(({ data }: any) => Promise.resolve({ id: 'aio-1', ...data }));
+
+        const result = await service.publish('aio-1');
+
+        expect(result.status).toBe(AiOfferFromOnlineStatus.PUBLISHED);
+      }
+    });
+
+    it('a promotional offer with no verified price is refused with the exact required admin message, and never invents a price', async () => {
+      prisma.aiOfferFromOnline.findUnique.mockResolvedValue(
+        makeOffer({ matched_business_id: 'biz-1', offer_title: 'Buy One Get One Free', offer_price: null }),
+      );
+
+      await expect(service.publish('aio-1')).rejects.toThrow(
+        'PRICE REQUIRED: This promotional offer has no verified source price. Open source → verify price → patch offer → publish.',
+      );
+      expect(prisma.offer.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('validateSelected — dry run, no side effects', () => {
+    it('classifies category-fixable, price-required, ready, and already-terminal offers correctly, and touches no write path', async () => {
+      prisma.aiOfferFromOnline.findUnique.mockImplementation(({ where }: any) => {
+        const byId: Record<string, unknown> = {
+          'ready-1': makeOffer({ id: 'ready-1', category: 'fitness', offer_price: 500 }),
+          'cat-1': makeOffer({ id: 'cat-1', category: 'quantum-widgets', offer_price: 500 }),
+          'price-1': makeOffer({ id: 'price-1', category: 'fitness', offer_price: null }),
+          'done-1': makeOffer({ id: 'done-1', status: AiOfferFromOnlineStatus.PUBLISHED }),
+        };
+        return Promise.resolve(byId[where.id]);
+      });
+
+      const result = await service.validateSelected(['ready-1', 'cat-1', 'price-1', 'done-1']);
+
+      expect(result.total).toBe(4);
+      expect(result.readyToPublish).toBe(1);
+      expect(result.categoryFixable).toBe(1);
+      expect(result.priceRequired).toBe(1);
+      expect(result.otherFailures).toBe(1);
+      expect(result.items.find((i) => i.id === 'ready-1')!.outcome).toBe('READY');
+      expect(result.items.find((i) => i.id === 'cat-1')!.outcome).toBe('CATEGORY_FIXABLE');
+      expect(result.items.find((i) => i.id === 'price-1')!.outcome).toBe('PRICE_REQUIRED');
+      expect(result.items.find((i) => i.id === 'done-1')!.outcome).toBe('OTHER_FAILURE');
+      // A true dry run: no Business/Offer created, no queue row mutated.
+      expect(prisma.offer.create).not.toHaveBeenCalled();
+      expect(draftCreation.matchOrCreateBusiness).not.toHaveBeenCalled();
+      expect(prisma.aiOfferFromOnline.update).not.toHaveBeenCalled();
+    });
+
+    it('flags a Collector-style slash category as READY with an informational normalization note, not as a failure', async () => {
+      prisma.aiOfferFromOnline.findUnique.mockResolvedValue(
+        makeOffer({ id: 'aio-1', category: 'Restaurants/Buffets', offer_price: 500 }),
+      );
+
+      const result = await service.validateSelected(['aio-1']);
+
+      expect(result.readyToPublish).toBe(1);
+      expect(result.items[0].outcome).toBe('READY');
+      expect(result.items[0].categoryNote).toBe('Category normalization required: Restaurants/Buffets → dining');
+    });
+
+    it('agrees with what publish() itself actually does — price is checked before category, matching real behavior', async () => {
+      // An offer broken on BOTH axes: validateSelected must report the same
+      // blocking reason publish() would actually throw first.
+      prisma.aiOfferFromOnline.findUnique.mockResolvedValue(
+        makeOffer({ id: 'aio-1', category: 'quantum-widgets', offer_price: null }),
+      );
+
+      const dryRun = await service.validateSelected(['aio-1']);
+      expect(dryRun.items[0].outcome).toBe('PRICE_REQUIRED');
+
+      await expect(service.publish('aio-1')).rejects.toThrow(/PRICE REQUIRED/);
+    });
+
+    it('an unknown id is reported as a per-item failure, not a thrown error for the whole batch', async () => {
+      prisma.aiOfferFromOnline.findUnique.mockResolvedValue(null);
+
+      const result = await service.validateSelected(['missing-1']);
+
+      expect(result.otherFailures).toBe(1);
+      expect(result.items[0].message).toMatch(/not found/i);
+    });
+
+    it('rejects an empty selection', async () => {
+      await expect(service.validateSelected([])).rejects.toThrow(/at least one offer/);
     });
   });
 

@@ -140,6 +140,16 @@ export class AiOffersFromOnlineController {
     return this.service.searchBusinesses(q);
   }
 
+  /**
+   * Dry run — reports what Publish Selected would do to each offer
+   * (ready / category-fixable / price-required / other) without creating
+   * or changing anything. Meant to be called before Publish Selected.
+   */
+  @Post('validate-selected')
+  validateSelected(@Body() body: PublishSelectedDto) {
+    return this.service.validateSelected(body.ids);
+  }
+
   /** Publish Selected — bulk, each offer processed independently. */
   @Post('publish-selected')
   publishSelected(@Body() body: PublishSelectedDto) {
