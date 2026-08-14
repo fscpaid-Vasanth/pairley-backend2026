@@ -215,6 +215,65 @@ describe('OfferPublisherService', () => {
         /Only a DRAFT offer can be approved/,
       );
     });
+
+    // 2026-08-14 — regression coverage for a production bug: AI Offers From
+    // Online creates a real Offer with offer_price: 0 (a "no verified
+    // price" sentinel) for a price-less promotional offer, then calls
+    // approveDraft(offerId, true) immediately. Without allowMissingPrice,
+    // this check rejected every one of those offers with "missing:
+    // offerPrice" — the whole "price is optional" feature silently failed
+    // to publish anything without a real price.
+    describe('allowMissingPrice — the AI Offers From Online 0-price sentinel', () => {
+      it('still rejects a 0 offer_price by DEFAULT — Offer Publisher\'s own manual flow is unaffected', async () => {
+        const zeroPrice = draftOffer({
+          title: 'Real Offer',
+          description: 'desc',
+          category: 'Fitness',
+          original_price: 1000,
+          offer_price: 0,
+          required_people: 1,
+          cover_image: 'https://x/cover.jpg',
+          business: business({ mobile: '9876543210', city: 'Bangalore', address: '123 St' }),
+        });
+        prisma.offer.findUnique.mockResolvedValue(zeroPrice);
+
+        await expect(service.approveDraft('offer-1')).rejects.toThrow(/missing:.*offerPrice/);
+      });
+
+      it('approves a 0 offer_price when allowMissingPrice is true — the exact case that was broken', async () => {
+        const zeroPrice = draftOffer({
+          title: 'Buy One Get One Free',
+          description: 'desc',
+          category: 'Shopping',
+          original_price: 0,
+          offer_price: 0,
+          required_people: 1,
+          cover_image: 'https://x/cover.jpg',
+          business: business({ mobile: '9876543210', city: 'Bangalore', address: '123 St' }),
+        });
+        prisma.offer.findUnique.mockResolvedValue(zeroPrice);
+        prisma.offer.update.mockResolvedValue({ ...zeroPrice, status: 'APPROVED' });
+
+        const result = await service.approveDraft('offer-1', true);
+
+        expect(result.status).toBe('APPROVED');
+      });
+
+      it('allowMissingPrice does not waive any OTHER required field', async () => {
+        const missingTitle = draftOffer({
+          title: '',
+          description: 'desc',
+          category: 'Shopping',
+          offer_price: 0,
+          required_people: 1,
+          cover_image: 'https://x/cover.jpg',
+          business: business({ mobile: '9876543210', city: 'Bangalore', address: '123 St' }),
+        });
+        prisma.offer.findUnique.mockResolvedValue(missingTitle);
+
+        await expect(service.approveDraft('offer-1', true)).rejects.toThrow(/missing:.*title/);
+      });
+    });
   });
 
   describe('publishDraft', () => {

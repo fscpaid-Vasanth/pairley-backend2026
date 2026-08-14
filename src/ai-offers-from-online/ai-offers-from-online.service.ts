@@ -14,15 +14,6 @@ import { AiOfferDuplicateDetectionService } from './duplicate-detection.service'
 
 const BANNER_FOLDER = 'ai-offers-from-online/banners';
 
-// Shared verbatim between publish()'s real refusal and validateSelected()'s
-// dry-run preview, so a dry run never promises something the real publish
-// attempt then contradicts. This is a message about the OFFER TYPE's
-// pricing mechanic (promotional, no fixed ₹ amount stated by the source),
-// never a statement that BOGO/BOGT/free-benefit offers are themselves
-// disallowed — offer_type is untouched by this check, only offer_price is.
-const PRICE_REQUIRED_MESSAGE =
-  'PRICE REQUIRED: This promotional offer has no verified source price. Open source → verify price → patch offer → publish.';
-
 export interface ExportedOfferFields {
   collectorOfferId: string;
   merchantName: string;
@@ -61,13 +52,7 @@ export interface CorrectOfferFields {
 }
 
 /** The outcome of one offer inside a bulk Publish Selected run. */
-export type BulkPublishOutcome =
-  | 'PUBLISHED'
-  | 'DUPLICATE'
-  | 'PRICE_REQUIRED'
-  | 'CATEGORY_REQUIRED'
-  | 'EXPIRED'
-  | 'FAILED';
+export type BulkPublishOutcome = 'PUBLISHED' | 'DUPLICATE' | 'CATEGORY_REQUIRED' | 'EXPIRED' | 'FAILED';
 
 export interface BulkPublishItemResult {
   id: string;
@@ -79,7 +64,6 @@ export interface BulkPublishItemResult {
 export interface BulkPublishResult {
   published: number;
   duplicate: number;
-  priceRequired: number;
   categoryRequired: number;
   expired: number;
   failed: number;
@@ -89,13 +73,14 @@ export interface BulkPublishResult {
 /**
  * The outcome of one offer inside a dry-run validation pass — see
  * validateSelected(). Deliberately the SAME vocabulary publish() itself now
- * persists to AiOfferFromOnlineStatus (PRICE_REQUIRED/CATEGORY_REQUIRED/
- * EXPIRED), plus READY (not itself a stored status — the offer just has
- * nothing blocking it) and OTHER_FAILURE (terminal/unknown — never a
- * genuine processing error, which only ever shows up as FAILED after a
- * real publish attempt, not in a dry run that touches nothing).
+ * persists to AiOfferFromOnlineStatus (CATEGORY_REQUIRED/EXPIRED), plus
+ * READY (not itself a stored status — the offer just has nothing blocking
+ * it) and OTHER_FAILURE (terminal/unknown — never a genuine processing
+ * error, which only ever shows up as FAILED after a real publish attempt,
+ * not in a dry run that touches nothing). Price is NOT part of this
+ * vocabulary (2026-08-14) — a null offer_price never blocks readiness.
  */
-export type ValidationOutcome = 'READY' | 'CATEGORY_REQUIRED' | 'PRICE_REQUIRED' | 'EXPIRED' | 'OTHER_FAILURE';
+export type ValidationOutcome = 'READY' | 'CATEGORY_REQUIRED' | 'EXPIRED' | 'OTHER_FAILURE';
 
 export interface ValidationItemResult {
   id: string;
@@ -115,7 +100,6 @@ export interface DryRunValidationResult {
   total: number;
   readyToPublish: number;
   categoryRequired: number;
-  priceRequired: number;
   expired: number;
   otherFailures: number;
   items: ValidationItemResult[];
@@ -379,11 +363,16 @@ export class AiOffersFromOnlineService {
     }
 
     // A correction that resolves the exact thing a review status was
-    // blocking on returns the row to the normal flow — "save verified
-    // price/category → validation reruns → offer becomes ready" — rather
-    // than leaving it stuck under a status that no longer describes it.
-    // Any OTHER edit to a review-state row (e.g. fixing the title while
-    // still price-required) leaves the status untouched.
+    // blocking on returns the row to the normal flow — rather than leaving
+    // it stuck under a status that no longer describes it. Any OTHER edit
+    // to a review-state row (e.g. fixing the title while still
+    // category-required) leaves the status untouched.
+    //
+    // The PRICE_REQUIRED branch below is legacy-only (2026-08-14): publish()
+    // no longer assigns this status to anything, but a row already sitting
+    // in it from before this change should still recover cleanly if an
+    // admin patches a price into it before the one-off reclassify script
+    // runs — see scripts/reclassify-price-required-offers.js.
     let nextStatus = offer.status;
     if (offer.status === AiOfferFromOnlineStatus.PRICE_REQUIRED && fields.offerPrice !== undefined) {
       nextStatus = AiOfferFromOnlineStatus.PENDING_ADMIN_REVIEW;
@@ -442,21 +431,17 @@ export class AiOffersFromOnlineService {
     }
 
     // Pre-flight classification — before any Business/Offer mutation is
-    // attempted. EXPIRED/PRICE_REQUIRED/CATEGORY_REQUIRED are expected,
-    // admin-correctable REVIEW states, never processing bugs: publish()
-    // returns normally with that specific status (the same pattern
-    // DUPLICATE_SUPPRESSED already uses below), rather than throwing into
-    // publishSelected()'s generic FAILED catch block. offer_price/category
-    // being unresolved on THIS queue table is a legitimate, expected state
-    // (2026-08-11/13) — the real, live Offer this method creates still
-    // requires both to be resolved; that's what correct() (PATCH :id) is
+    // attempted. EXPIRED/CATEGORY_REQUIRED are expected, admin-correctable
+    // REVIEW states, never processing bugs: publish() returns normally with
+    // that specific status (the same pattern DUPLICATE_SUPPRESSED already
+    // uses below), rather than throwing into publishSelected()'s generic
+    // FAILED catch block. category being unresolved on THIS queue table is
+    // a legitimate, expected state — that's what correct() (PATCH :id) is
     // for, and it moves the row back to PENDING_ADMIN_REVIEW once supplied.
+    // Price is NOT part of this gate (2026-08-14) — see the Offer creation
+    // below for how a null offer_price is handled.
     const classification = this.classifyForPublish(offer);
-    if (
-      classification.outcome === 'EXPIRED' ||
-      classification.outcome === 'PRICE_REQUIRED' ||
-      classification.outcome === 'CATEGORY_REQUIRED'
-    ) {
+    if (classification.outcome === 'EXPIRED' || classification.outcome === 'CATEGORY_REQUIRED') {
       return this.prisma.aiOfferFromOnline.update({
         where: { id },
         data: {
@@ -551,10 +536,16 @@ export class AiOffersFromOnlineService {
           // this queue asserts (same convention Offer Publisher and
           // bulk-import both already use).
           original_price: offer.original_price ?? 0,
-          // Non-null by construction: classifyForPublish() above already
-          // returned early with PRICE_REQUIRED for a null offer_price —
-          // reaching here means classification.outcome was READY.
-          offer_price: offer.offer_price!,
+          // 2026-08-14 — same 0-sentinel convention as original_price above:
+          // Offer.offer_price is NOT NULL on the live table, but Pairley's
+          // business model doesn't require a numeric price to publish (BOGO/
+          // percentage/couple/group offers are all valid without one) — 0
+          // here means "no fixed price was verified", never "free". The
+          // customer-facing price badge (DealCard.jsx, DealDetailPage.jsx,
+          // SearchOverlay.jsx) must treat offer_price === 0 as "show the
+          // offer's own title/mechanic instead of a ₹/% badge", not as a
+          // real price — see those files for the corresponding guard.
+          offer_price: offer.offer_price ?? 0,
           required_people: 1,
           start_date: now,
           end_date: offer.validity_end ?? thirtyDaysOut,
@@ -611,7 +602,10 @@ export class AiOffersFromOnlineService {
     const current = await this.prisma.offer.findUniqueOrThrow({ where: { id: offerId }, select: { status: true } });
 
     if (current.status === OfferStatus.DRAFT) {
-      await this.offerPublisherService.approveDraft(offerId);
+      // allowMissingPrice: this pipeline's offer_price is a 0 sentinel when
+      // no verified number exists (never fabricated), and that's fine —
+      // see approveDraft()'s own doc comment.
+      await this.offerPublisherService.approveDraft(offerId, true);
       await this.prisma.aiOfferFromOnline.update({
         where: { id },
         data: { status: AiOfferFromOnlineStatus.READY_TO_PUBLISH },
@@ -643,13 +637,18 @@ export class AiOffersFromOnlineService {
   /**
    * Read-only classification used by both the dry run (validateSelected)
    * and publish() itself (same precedence: terminal status, then expiry,
-   * then price, then category — so a dry run never disagrees with what
-   * publish() actually does). Never touches the database.
+   * then category — so a dry run never disagrees with what publish()
+   * actually does). Never touches the database.
+   *
+   * 2026-08-14 — price is deliberately NOT part of this classification.
+   * Pairley's business model doesn't require a numeric price to publish
+   * (BOGO/percentage/couple/group offers are all valid without one) — see
+   * publish() below for how a null offer_price is handled once an offer
+   * reaches Offer creation.
    */
   private classifyForPublish(offer: {
     status: AiOfferFromOnlineStatus;
     category: string | null;
-    offer_price: number | null;
     validity_end: Date | null;
   }): Omit<ValidationItemResult, 'id'> {
     if (TERMINAL_STATUSES.includes(offer.status)) {
@@ -657,9 +656,6 @@ export class AiOffersFromOnlineService {
     }
     if (offer.validity_end && offer.validity_end.getTime() < Date.now()) {
       return { outcome: 'EXPIRED', message: this.expiredMessage(offer.validity_end), categoryNote: null };
-    }
-    if (offer.offer_price == null) {
-      return { outcome: 'PRICE_REQUIRED', message: PRICE_REQUIRED_MESSAGE, categoryNote: null };
     }
     // Empty/null category is not a failure — normalizeForStorage() resolves
     // it to 'general' at publish time, exactly like this check must mirror.
@@ -701,7 +697,6 @@ export class AiOffersFromOnlineService {
       total: items.length,
       readyToPublish: items.filter((i) => i.outcome === 'READY').length,
       categoryRequired: items.filter((i) => i.outcome === 'CATEGORY_REQUIRED').length,
-      priceRequired: items.filter((i) => i.outcome === 'PRICE_REQUIRED').length,
       expired: items.filter((i) => i.outcome === 'EXPIRED').length,
       otherFailures: items.filter((i) => i.outcome === 'OTHER_FAILURE').length,
       items,
@@ -724,10 +719,13 @@ export class AiOffersFromOnlineService {
     // publish() returning normally with one of these statuses is an expected
     // review outcome, not a failure — same status-to-outcome mapping as
     // DUPLICATE_SUPPRESSED already used. Only a genuinely thrown error below
-    // is a processing FAILED.
+    // is a processing FAILED. PRICE_REQUIRED is deliberately absent
+    // (2026-08-14) — publish() never assigns it anymore, so it can no
+    // longer be an outcome here; any row still carrying that status from
+    // before this change reclassifies to PENDING_ADMIN_REVIEW (or publishes
+    // outright) the next time publish() runs on it.
     const REVIEW_STATUS_OUTCOME: Partial<Record<AiOfferFromOnlineStatus, BulkPublishOutcome>> = {
       [AiOfferFromOnlineStatus.DUPLICATE_SUPPRESSED]: 'DUPLICATE',
-      [AiOfferFromOnlineStatus.PRICE_REQUIRED]: 'PRICE_REQUIRED',
       [AiOfferFromOnlineStatus.CATEGORY_REQUIRED]: 'CATEGORY_REQUIRED',
       [AiOfferFromOnlineStatus.EXPIRED]: 'EXPIRED',
     };
@@ -754,7 +752,6 @@ export class AiOffersFromOnlineService {
     const summary: BulkPublishResult = {
       published: results.filter((r) => r.outcome === 'PUBLISHED').length,
       duplicate: results.filter((r) => r.outcome === 'DUPLICATE').length,
-      priceRequired: results.filter((r) => r.outcome === 'PRICE_REQUIRED').length,
       categoryRequired: results.filter((r) => r.outcome === 'CATEGORY_REQUIRED').length,
       expired: results.filter((r) => r.outcome === 'EXPIRED').length,
       failed: results.filter((r) => r.outcome === 'FAILED').length,
@@ -762,8 +759,7 @@ export class AiOffersFromOnlineService {
     };
     this.logger.log(
       `Publish Selected: ${summary.published} published, ${summary.duplicate} flagged as duplicate, ` +
-        `${summary.priceRequired} price-required, ${summary.categoryRequired} category-required, ` +
-        `${summary.expired} expired, ${summary.failed} failed (of ${ids.length})`,
+        `${summary.categoryRequired} category-required, ${summary.expired} expired, ${summary.failed} failed (of ${ids.length})`,
     );
     return summary;
   }

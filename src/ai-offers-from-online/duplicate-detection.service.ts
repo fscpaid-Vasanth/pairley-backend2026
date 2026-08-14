@@ -100,7 +100,17 @@ export class AiOfferDuplicateDetectionService {
 
     for (const candidate of candidates) {
       const candidateText = [candidate.title, candidate.description, candidate.terms].filter(Boolean).join(' ');
-      const candidateMechanic = classifyMechanic(candidateText, candidate.original_price, candidate.offer_price);
+      // 0 is the "no verified value" sentinel on the live Offer table (both
+      // original_price and offer_price — see ai-offers-from-online.service.ts)
+      // — never a real ₹0. Feeding a raw 0 into classifyMechanic would let
+      // FLAT_PRICE fire on a real-original/no-verified-offer-price offer
+      // (originalPrice > 0 sentinel), misclassifying a BOGO/percentage/etc.
+      // offer as a flat price instead of reading its actual text mechanic.
+      const candidateMechanic = classifyMechanic(
+        candidateText,
+        candidate.original_price || null,
+        candidate.offer_price || null,
+      );
       const jaccard = titleJaccard(input.offerTitle, candidate.title);
       const mechanicMatch = mechanicsEqual(incomingMechanic, candidateMechanic);
 

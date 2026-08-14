@@ -409,7 +409,15 @@ export class OfferPublisherService {
   // Steps 3-4 — approve / reject / publish.
   // ---------------------------------------------------------------------
 
-  async approveDraft(offerId: string) {
+  /**
+   * allowMissingPrice (2026-08-14): the AI Offers From Online pipeline
+   * publishes real offers with no numeric price (BOGO/percentage/couple/
+   * group offers are all valid without one — offer_price is 0, a sentinel,
+   * never a real ₹0). Offer Publisher's own manual flow — a human directly
+   * creating a standard priced offer — still requires a real price, exactly
+   * as before; only AiOffersFromOnlineService.publish() passes true here.
+   */
+  async approveDraft(offerId: string, allowMissingPrice = false) {
     const offer = await this.loadOfferWithBusiness(offerId);
     if (offer.status !== OfferStatus.DRAFT) {
       throw new BadRequestException(
@@ -424,7 +432,7 @@ export class OfferPublisherService {
     // originalPrice deliberately not required — BOGO/BOGT-style offers
     // ("Buy 2 Get 1 Free") have no meaningful original price, only the
     // promotional structure itself.
-    if (!offer.offer_price) missing.push('offerPrice');
+    if (!allowMissingPrice && !offer.offer_price) missing.push('offerPrice');
     if (!offer.required_people || offer.required_people < 1)
       missing.push('minParticipants');
     if (!offer.business.mobile) missing.push('merchant mobile');

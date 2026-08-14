@@ -184,6 +184,42 @@ describe('AiOfferDuplicateDetectionService', () => {
 
       expect(result.confidence).toBe('LOW');
     });
+
+    // 2026-08-14 — regression: a candidate read from the live Offer table
+    // can have offer_price = 0 (the "no verified price" sentinel — see
+    // ai-offers-from-online.service.ts) alongside a genuinely real
+    // original_price. Before the fix, classifyMechanic saw
+    // originalPrice > offerPrice (2000 > 0) and misclassified the candidate
+    // as FLAT_PRICE instead of reading its real BOGO text — which silently
+    // hid a genuine near-duplicate (mechanicsEqual never matches across
+    // different types), a false negative on exactly the offers this
+    // feature exists to publish.
+    it('a 0-offer_price candidate with a real original_price is classified by its TEXT mechanic, not misread as FLAT_PRICE', async () => {
+      prisma.offer.findMany.mockResolvedValue([
+        {
+          id: 'existing-offer-1',
+          title: 'Shapes Gym — Buy One Get One Free Personal Training',
+          description: null,
+          terms: null,
+          original_price: 2000, // real anchor price the Collector captured
+          offer_price: 0, // sentinel — no verified offer price
+        },
+      ]);
+
+      const result = await service.check({
+        businessId: 'biz-1',
+        offerTitle: 'Shapes Gym — Buy One Get One Free Personal Training',
+        // Incoming side is the queue's own field — genuinely null, never 0.
+        originalPrice: null,
+        offerPrice: null,
+      });
+
+      // Both sides are really BOGO with a near-identical title — must still
+      // be caught as HIGH confidence, proving the candidate was classified
+      // by its text (BOGO), not miscategorized as FLAT_PRICE(2000, 0).
+      expect(result.confidence).toBe('HIGH');
+      expect(result.duplicateOfferId).toBe('existing-offer-1');
+    });
   });
 
   describe('LIVE_STATUSES scoping', () => {
