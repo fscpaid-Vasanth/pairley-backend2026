@@ -39,6 +39,10 @@ class ImportExportedOfferDto {
   // a multipart string — the service does the real presence check so the
   // refusal message can explain *why* a price is mandatory.
   @IsOptional() offerPrice?: string;
+  // Raw, as-reported-by-the-Collector signal — audit only, never used for
+  // publish-eligibility. See ExportedOfferFields.sourcePrice.
+  @IsOptional() sourcePrice?: string;
+  @IsOptional() @IsString() @MaxLength(10) sourceCurrency?: string;
   @IsOptional() @IsString() validityStart?: string;
   @IsOptional() @IsString() validityEnd?: string;
   @IsOptional() @IsString() @MaxLength(FIELD_MAX_LEN) terms?: string;
@@ -118,6 +122,8 @@ export class AiOffersFromOnlineController {
         description: body.description,
         originalPrice: body.originalPrice !== undefined ? Number(body.originalPrice) : undefined,
         offerPrice: body.offerPrice !== undefined ? Number(body.offerPrice) : undefined,
+        sourcePrice: body.sourcePrice !== undefined ? Number(body.sourcePrice) : undefined,
+        sourceCurrency: body.sourceCurrency,
         validityStart: body.validityStart,
         validityEnd: body.validityEnd,
         terms: body.terms,

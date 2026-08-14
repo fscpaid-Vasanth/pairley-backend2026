@@ -998,6 +998,34 @@ model EntitlementGrant {
   @@map("entitlement_grants")
 }
 
+// Bulk Customer Details Export — one row per export, regardless of how many
+// leads it contained. Standalone log, same reasoning as LeadUnlockAudit: no
+// @relation, so it survives independently of the business/subscription rows
+// it references. Never stores customer_mobile or any other contact field —
+// only the fact that an export happened, by whom, of how many records.
+model LeadExportAudit {
+  id                String   @id @default(uuid())
+  business_id       String
+  actor_id          String
+  // Null when the export spans every offer for the business rather than one
+  // specific offer.
+  offer_id          String?
+  // The exact filters the merchant requested — {offerId, dateFrom, dateTo,
+  // status} — kept for support/audit ("what did they actually ask for"),
+  // distinct from record_count which is what the backend actually returned.
+  filters_snapshot  Json     @default("{}")
+  record_count      Int
+  // Which Subscription authorized this export, snapshotted by id — a
+  // Subscription can later expire or be renewed; the audit trail must still
+  // say truthfully which one was active at export time.
+  subscription_id   String?
+  correlation_id    String?
+  created_at        DateTime @default(now())
+
+  @@index([business_id, created_at])
+  @@map("lead_export_audit")
+}
+
 // ---------------------------------------------------------------------------
 // AI Offers From Online (2026-08-09) — the intake queue for the standalone
 // "Pairley AI Offer Collector" microservice. Deliberately a STAGING table,
@@ -1027,8 +1055,18 @@ model EntitlementGrant {
 enum AiOfferFromOnlineStatus {
   PENDING_ADMIN_REVIEW // exported from the Collector with an approved banner — awaiting an admin's publishing decision
   MERCHANT_MATCHED // matched_business_id or created_business_id is set, not yet published
+  // 2026-08-13 — split out of FAILED: a missing/unresolved price or category
+  // is an expected, admin-correctable REVIEW state, never a processing bug.
+  // Set by publish()'s pre-flight classification, before any Business/Offer
+  // mutation is attempted — never via the generic catch block below.
+  PRICE_REQUIRED // offer_price is null — see correct() to supply one, which returns this row to PENDING_ADMIN_REVIEW
+  CATEGORY_REQUIRED // category has no known Pairley taxonomy mapping — see correct()
+  EXPIRED // validity_end has passed. A proxy only — Pairley has no crawler and cannot confirm the SOURCE page still shows the deal live, only that this row's own stated validity window is over.
   READY_TO_PUBLISH // real Offer(DRAFT) created and approved through Offer Publisher — see created_offer_id
   PUBLISHED // the real Offer has been flipped ACTIVE and is live on the customer site
+  // Reserved for genuine processing failures ONLY (Offer Publisher's own
+  // validation, business creation errors, unexpected exceptions) —
+  // NEVER for price/category, which get their own statuses above.
   FAILED // a publish attempt failed (validation, etc.) — retryable, see failure_reason
   REJECTED // an admin declined it; never became a real Business/Offer
   DUPLICATE_SUPPRESSED // a HIGH-confidence duplicate of an existing live Offer — publish refused automatically; see duplicate_of_offer_id/duplicate_score/duplicate_reasons. Never became a real Business/Offer.
@@ -1078,9 +1116,17 @@ model AiOfferFromOnline {
   // carries its real price here, enforced in the service layer, not just
   // this column's type.
   offer_price    Float?
-  validity_start DateTime?
-  validity_end   DateTime?
-  terms          String?
+  // Raw, as-reported-by-the-Collector price signal (2026-08-13) — purely
+  // informational/audit, never read by publish() or any readiness check.
+  // Kept separate from offer_price so an ambiguous/unverified source number
+  // is never mistaken for the verified one: offer_price stays the single
+  // "this is the number Pairley will actually publish" field, populated
+  // only by a genuinely resolved Collector export or an admin's correct().
+  source_price    Float?
+  source_currency String?   @default("INR")
+  validity_start  DateTime?
+  validity_end    DateTime?
+  terms           String?
 
   // NOT NULL by architecture: the exact banner a human approved in the
   // Collector. Copied byte-for-byte into this app's own storage at export

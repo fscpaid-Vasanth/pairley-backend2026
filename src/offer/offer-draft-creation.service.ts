@@ -20,6 +20,15 @@ export interface DraftBusinessFields {
   pincode?: string | null;
   area?: string | null;
   googleMapsLink?: string | null;
+  /**
+   * Set true ONLY by the AI Offers From Online pipeline — the sole caller
+   * where a business is being created because the AI Collector found it,
+   * not because an admin manually created a placeholder (Offer Publisher's
+   * own call site omits this, defaulting to false, unchanged). Drives
+   * Business.created_by_ai, which the claim flows (ClaimRequestService,
+   * AuthService.absorbUnclaimedAiBusiness) already key off of.
+   */
+  createdByAi?: boolean;
 }
 
 /** Lowercase, trim, collapse internal whitespace — used to compare a business name or city across rows written by different paths at different times. Empty/whitespace-only input normalizes to '' so callers can treat it as "no signal". */
@@ -129,6 +138,7 @@ export class OfferDraftCreationService {
         google_maps_link: fields.googleMapsLink || null,
         business_status: BusinessStatus.UNCLAIMED,
         source: Source.ADMIN,
+        created_by_ai: fields.createdByAi ?? false,
       },
     });
     return { businessId: business.id, created: true };

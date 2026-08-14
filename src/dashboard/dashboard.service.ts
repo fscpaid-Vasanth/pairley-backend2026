@@ -6,7 +6,21 @@ import {
   InterestStatus,
   VerificationStatus,
   SubscriptionStatus,
+  BusinessStatus,
+  Prisma,
 } from '@prisma/client';
+
+// Shop Onboardings must show only businesses a real human took action on —
+// self-registration, or an admin's explicit merchant match/create — never
+// a business the AI Offer Collector's own pipeline spun up on its own
+// (created_by_ai: true) that nobody has claimed yet (business_status still
+// UNCLAIMED). The moment such a business IS claimed (business_status flips
+// to CLAIMED, via ClaimRequestService or AuthService.absorbUnclaimedAiBusiness),
+// it correctly reappears here for the admin's own KYC/verification review —
+// that's a genuine human action, exactly what this queue is for.
+const EXCLUDE_UNCLAIMED_AI_BUSINESSES: Prisma.BusinessWhereInput = {
+  NOT: { created_by_ai: true, business_status: BusinessStatus.UNCLAIMED },
+};
 
 @Injectable()
 export class DashboardService {
@@ -81,7 +95,7 @@ export class DashboardService {
       where: { verification_status: VerificationStatus.APPROVED },
     });
     const pendingApprovals = await this.prisma.business.count({
-      where: { verification_status: VerificationStatus.PENDING },
+      where: { verification_status: VerificationStatus.PENDING, ...EXCLUDE_UNCLAIMED_AI_BUSINESSES },
     });
 
     const activeOffers = await this.prisma.offer.count({
@@ -157,7 +171,7 @@ export class DashboardService {
 
   // List businesses
   async listBusinesses(status?: string) {
-    const where: any = {};
+    const where: Prisma.BusinessWhereInput = { ...EXCLUDE_UNCLAIMED_AI_BUSINESSES };
     if (status) {
       where.verification_status = status as VerificationStatus;
     }

@@ -69,6 +69,21 @@ describe('OfferDraftCreationService', () => {
       expect(result.created).toBe(true);
     });
 
+    // 2026-08-13 — created_by_ai discriminates a business the AI Offer
+    // Collector spun up on its own from one an admin created manually
+    // (Offer Publisher's own placeholder businesses) — the flag the claim
+    // flows (ClaimRequestService, AuthService.absorbUnclaimedAiBusiness)
+    // and the Shop Onboardings exclusion (DashboardService) key off of.
+    it('sets created_by_ai: true only when the caller explicitly passes createdByAi: true', async () => {
+      await service.matchOrCreateBusiness({ merchantName: 'AI Found Gym', createdByAi: true });
+      expect(prisma.business.create.mock.calls[0][0].data.created_by_ai).toBe(true);
+    });
+
+    it('defaults created_by_ai to false when the caller omits it — Offer Publisher\'s own placeholder businesses are unaffected', async () => {
+      await service.matchOrCreateBusiness({ merchantName: 'Manually Added Shop' });
+      expect(prisma.business.create.mock.calls[0][0].data.created_by_ai).toBe(false);
+    });
+
     it('fills every NOT NULL Business column even when the caller supplies almost nothing', async () => {
       await service.matchOrCreateBusiness({ merchantName: 'X' });
 
