@@ -26,9 +26,9 @@ import * as bcrypt from 'bcrypt';
 // Same limit and mechanics as ClaimRequestService's MAX_OTP_ATTEMPTS — this
 // is the primary login/registration OTP flow, which previously had no
 // attempt limiting at all (unlike the claim flow, which has always had
-// this). A 6-digit OTP is 1,000,000 combinations; with no limiter, nothing
-// stopped an unthrottled guess-every-code attack against a known mobile
-// number.
+// this). A 4-digit OTP is only 10,000 combinations; with no limiter,
+// nothing stopped an unthrottled guess-every-code attack against a known
+// mobile number.
 const MAX_OTP_ATTEMPTS = 5;
 
 @Injectable()
@@ -89,7 +89,12 @@ export class AuthService implements OnModuleInit {
   }
 
   private merchantDefaultOtp(): string {
-    return this.configService.get<string>('MERCHANT_DEFAULT_OTP', '1234');
+    // Deliberately not '1234' — now that real OTPs are also 4 digits, a
+    // fixed pilot code equal to '1234' would be indistinguishable from a
+    // genuinely-generated code of the same value. This default only ever
+    // matters while MERCHANT_OTP_MODE=test (never production); see
+    // isMerchantOtpTestMode() above.
+    return this.configService.get<string>('MERCHANT_DEFAULT_OTP', '7654');
   }
 
   async onModuleInit() {

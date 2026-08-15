@@ -9,7 +9,7 @@ Purpose: remove SMS delivery friction/cost during the MVP merchant pilot.
 | Env var | Default | Effect |
 |---|---|---|
 | `MERCHANT_OTP_MODE` | `production` (safe default when unset) | `test` enables the fixed-OTP bypass for `role: 'Business'` requests. Any other value (including a typo) falls back to the real OTP flow. |
-| `MERCHANT_DEFAULT_OTP` | `1234` | The fixed code accepted while `MERCHANT_OTP_MODE=test`. |
+| `MERCHANT_DEFAULT_OTP` | `7654` | The fixed code accepted while `MERCHANT_OTP_MODE=test`. Deliberately not `1234` — real OTPs are also 4 digits now, so a fixed pilot code of `1234` would be indistinguishable from a genuinely-generated one. |
 
 Set on Render under the backend service's Environment tab. Not present in
 `.env.example` (there isn't one in this repo) — set directly, same as every
@@ -30,14 +30,13 @@ direction** — this was an explicit requirement.
   and Merchant Login (OTP tab) on `SignUpPage.jsx` / `LoginPage.jsx`, plus
   the Google-account merchant onboarding step on `LoginPage.jsx`.
 - **`MerchantQuickJoin.jsx`** (the Launch Pass "quick join" lead-capture
-  flow at `/merchant/quick-join` or similar) is a **separate, pre-existing
-  flow** that was found to already have its own ad-hoc, undocumented OTP
-  bypass (`TEST_NUMBERS`, prefix-matching, and a permanently-visible
-  "Use Default OTP: 123456" banner shown to every visitor). It does not use
-  this `MERCHANT_OTP_MODE` flag and was intentionally left unmodified — it
-  writes to a Firestore leads collection, not a real Business account, so
-  it's a lower-stakes but separate issue. Flagged for a future cleanup
-  decision, not addressed here.
+  flow at `/merchant/quick-join` or similar) is a **separate flow** that
+  does not use this `MERCHANT_OTP_MODE` flag — it writes to a Firestore
+  leads collection, not a real Business account. It previously had its own
+  ad-hoc, undocumented OTP bypass (`TEST_NUMBERS`, prefix-matching, and a
+  permanently-visible "Use Default OTP" banner); that bypass has since been
+  removed as part of the MSG91 production migration, so it now always
+  requires a real, server-verified OTP like every other entry point.
 
 ## Security scope — read before enabling on a shared/production environment
 

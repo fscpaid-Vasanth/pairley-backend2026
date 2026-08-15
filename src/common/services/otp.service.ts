@@ -1,6 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
+// MSG91's own SLA is well under this; 15s is generous headroom before we
+// give up and let the customer retry rather than leaving them on a spinner.
+const OTP_SEND_TIMEOUT_MS = 15_000;
+
 @Injectable()
 export class OtpService {
   private readonly logger = new Logger(OtpService.name);
@@ -48,6 +52,14 @@ export class OtpService {
           'Content-Type': 'application/json',
           authkey: this.apiKey,
         },
+        // Without this, a hung MSG91 endpoint would leave the whole
+        // /auth/send-otp request hanging indefinitely (bounded only by
+        // whatever timeout the platform happens to enforce), leaving the
+        // customer stuck on a spinner rather than getting a clear,
+        // fast "try again" — the two other network-call sites in this
+        // service and elsewhere in the backend already use this same
+        // AbortSignal.timeout() pattern for exactly this reason.
+        signal: AbortSignal.timeout(OTP_SEND_TIMEOUT_MS),
       });
 
       const result = (await response.json()) as {
@@ -68,6 +80,21 @@ export class OtpService {
       const errorMsg = this.getMsg91ErrorMessage(result);
       return { success: false, error: errorMsg };
     } catch (error) {
+      // AbortSignal.timeout() rejects with a DOMException named
+      // "TimeoutError" — distinguished here so the customer sees an
+      // actionable "the OTP provider is slow, try again" instead of the
+      // generic network-error message, without ever leaking MSG91-internal
+      // details (URL, template ID, raw error object).
+      if (error.name === 'TimeoutError') {
+        this.logger.error(
+          `MSG91 OTP send timed out after ${OTP_SEND_TIMEOUT_MS}ms`,
+        );
+        return {
+          success: false,
+          error:
+            'OTP provider is taking too long to respond. Please try again.',
+        };
+      }
       this.logger.error(`Failed to send OTP via MSG91: ${error.message}`);
       return {
         success: false,
@@ -194,6 +221,7 @@ export class OtpService {
           authkey: this.apiKey,
         },
         body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(OTP_SEND_TIMEOUT_MS),
       });
 
       const result = await response.json();
@@ -202,15 +230,24 @@ export class OtpService {
       );
       return true;
     } catch (error) {
+      if (error.name === 'TimeoutError') {
+        this.logger.error(
+          `MSG91 SMS send timed out after ${OTP_SEND_TIMEOUT_MS}ms`,
+        );
+        return false;
+      }
       this.logger.error(`Failed to send SMS via MSG91: ${error.message}`);
       return false;
     }
   }
 
   generateOtp(): string {
-    // 6-digit code, uniformly random across 000000-999999.
-    return Math.floor(Math.random() * 1_000_000)
+    // 4-digit code, uniformly random across 0000-9999. Sent to MSG91's
+    // existing approved template ("Your PAIRLEY verification code is
+    // ##OTP##...") unchanged — the template has no fixed digit-count
+    // expectation, it just substitutes whatever string is passed as `code`.
+    return Math.floor(Math.random() * 10_000)
       .toString()
-      .padStart(6, '0');
+      .padStart(4, '0');
   }
 }

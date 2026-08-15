@@ -39,15 +39,19 @@ class SendOtpDto {
   role?: 'Customer' | 'Business';
 }
 
-class VerifyOtpDto {
+export class VerifyOtpDto {
   @IsString()
   @IsNotEmpty()
   @Length(10, 15)
   mobile: string;
 
+  // Exactly 4 digits — matches OtpService.generateOtp() and the
+  // MERCHANT_OTP_MODE pilot's fixed code, both 4 characters. A 5/6-digit
+  // (or any other length) submission is rejected here, before it ever
+  // reaches AuthService.
   @IsString()
   @IsNotEmpty()
-  @Length(4, 6)
+  @Length(4, 4)
   code: string;
 
   @IsIn(REGISTRATION_ROLES)

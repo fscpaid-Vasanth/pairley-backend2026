@@ -126,6 +126,48 @@ describe('AuthService.verifyOtp', () => {
     );
   });
 
+  // '1234' is now a plain member of the real 4-digit OTP space (same shape
+  // as any other code) — it must succeed or fail purely on whether it
+  // matches the record actually issued for this request, never as a special
+  // case in either direction.
+  it('"1234" is rejected like any other wrong guess when it is not the stored code', async () => {
+    prisma.otpVerification.findFirst.mockImplementation(({ where }) =>
+      Promise.resolve(
+        'code' in where
+          ? null
+          : {
+              id: 'otp-1',
+              mobile: '9999999999',
+              code: '5093',
+              attempts: 0,
+              expires_at: new Date(Date.now() + 60_000),
+              created_at: new Date(),
+            },
+      ),
+    );
+    await expect(service.verifyOtp('9999999999', '1234')).rejects.toThrow(
+      'Invalid OTP code',
+    );
+  });
+
+  it('"1234" succeeds when it genuinely is the code that was generated and stored for this request', async () => {
+    prisma.otpVerification.findFirst.mockResolvedValue({
+      id: 'otp-1',
+      mobile: '9999999999',
+      code: '1234',
+      attempts: 0,
+      expires_at: new Date(Date.now() + 60_000),
+      created_at: new Date(),
+    });
+
+    const result = await service.verifyOtp('9999999999', '1234');
+
+    expect(result.exists).toBe(false);
+    expect(prisma.otpVerification.deleteMany).toHaveBeenCalledWith({
+      where: { mobile: '9999999999' },
+    });
+  });
+
   it('rejects an expired OTP record even if the code matches', async () => {
     prisma.otpVerification.findFirst.mockResolvedValue({
       id: 'otp-1',
@@ -408,7 +450,7 @@ describe('AuthService — Merchant OTP pilot bypass', () => {
     ).rejects.toThrow(BadRequestException);
   });
 
-  it('honors a custom MERCHANT_DEFAULT_OTP value instead of the 1234 default', async () => {
+  it('honors a custom MERCHANT_DEFAULT_OTP value over an arbitrary guess', async () => {
     service = await buildService({
       MERCHANT_OTP_MODE: 'test',
       MERCHANT_DEFAULT_OTP: '5678',
@@ -418,6 +460,101 @@ describe('AuthService — Merchant OTP pilot bypass', () => {
     ).rejects.toThrow(BadRequestException);
     const result = await service.verifyOtp('9000000001', '5678', 'Business');
     expect(result.exists).toBe(false);
+  });
+
+  // The pilot's own fixed code must never be '1234' by default — now that
+  // real OTPs are also 4 digits, a hardcoded '1234' bypass would be
+  // indistinguishable from a genuinely-generated one. See merchantDefaultOtp().
+  it('the unset MERCHANT_DEFAULT_OTP default is not "1234" — a raw "1234" guess fails against it', async () => {
+    service = await buildService({ MERCHANT_OTP_MODE: 'test' });
+    await expect(
+      service.verifyOtp('9000000001', '1234', 'Business'),
+    ).rejects.toThrow(BadRequestException);
+    // The real (undocumented-to-the-guesser) default succeeds, proving the
+    // pilot bypass still works end-to-end with its new fixed code.
+    const result = await service.verifyOtp('9000000001', '7654', 'Business');
+    expect(result.exists).toBe(false);
+  });
+});
+
+/**
+ * sendOtp() — real (non-pilot) flow. Confirms each call, including a resend,
+ * generates and stores a fresh 4-digit code rather than reusing/caching one.
+ */
+describe('AuthService.sendOtp — real OTP flow', () => {
+  let service: AuthService;
+  let prisma: {
+    otpVerification: { create: jest.Mock };
+  };
+  let otpService: { generateOtp: jest.Mock; sendOtp: jest.Mock };
+
+  const makeConfig = () =>
+    ({ get: jest.fn((_key: string, def?: any) => def) }) as unknown as ConfigService;
+
+  beforeEach(async () => {
+    prisma = { otpVerification: { create: jest.fn().mockResolvedValue({}) } };
+    otpService = {
+      generateOtp: jest.fn(),
+      sendOtp: jest.fn().mockResolvedValue({ success: true }),
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        AuthService,
+        { provide: PrismaService, useValue: prisma },
+        {
+          provide: JwtService,
+          useValue: { sign: jest.fn().mockReturnValue('signed-jwt') },
+        },
+        { provide: OtpService, useValue: otpService },
+        { provide: StorageService, useValue: {} },
+        {
+          provide: NotificationService,
+          useValue: { sendNotification: jest.fn() },
+        },
+        { provide: ConfigService, useValue: makeConfig() },
+        CategoryService,
+        {
+          provide: GoogleTokenVerifierService,
+          useValue: { verifyIdToken: jest.fn() },
+        },
+      ],
+    }).compile();
+
+    service = module.get(AuthService);
+  });
+
+  it('stores the freshly generated 4-digit code from OtpService', async () => {
+    otpService.generateOtp.mockReturnValue('9042');
+    await service.sendOtp('9000000001', 'Customer');
+
+    expect(prisma.otpVerification.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          mobile: '9000000001',
+          code: '9042',
+        }),
+      }),
+    );
+  });
+
+  it('resend (a second sendOtp call) generates and stores a new code, not the same one', async () => {
+    otpService.generateOtp
+      .mockReturnValueOnce('9042')
+      .mockReturnValueOnce('1730');
+
+    await service.sendOtp('9000000001', 'Customer');
+    await service.sendOtp('9000000001', 'Customer'); // resend
+
+    expect(otpService.generateOtp).toHaveBeenCalledTimes(2);
+    expect(prisma.otpVerification.create).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ data: expect.objectContaining({ code: '9042' }) }),
+    );
+    expect(prisma.otpVerification.create).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ data: expect.objectContaining({ code: '1730' }) }),
+    );
   });
 });
 
