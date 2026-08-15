@@ -496,12 +496,21 @@ export class OfferService {
       whereClause.status = filters.status as OfferStatus;
     } else if (!filters.status) {
       whereClause.status = OfferStatus.ACTIVE; // Active by default
-      // Defensive expiry filter — belt-and-suspenders alongside the hourly
-      // OfferExpiryScheduler sweep, so an offer past its end_date never
-      // appears in discovery during the gap before the sweep catches it.
-      // Only applied to the default (ACTIVE-only) view, not an explicit
-      // status/ALL request, so merchant/admin tooling still sees its own
-      // offers regardless of end_date.
+    }
+
+    // Defensive expiry filter — belt-and-suspenders alongside the hourly
+    // OfferExpiryScheduler sweep, so an offer past its end_date never
+    // appears in public discovery during the up-to-1h gap before the sweep
+    // catches it. Applied whenever the resolved filter is ACTIVE-only,
+    // whether the caller relied on the default or passed status=ACTIVE
+    // explicitly — previously only the default path got this protection,
+    // so an explicit ?status=ACTIVE call (used by DealsPage and the
+    // homepage) could surface an expired-but-not-yet-swept offer. Matches
+    // the same status+end_date pairing getCategoryCounts() already uses.
+    // Never applied to status=ALL or any other explicit status (PENDING,
+    // PAUSED, etc.) — merchant/admin tooling still sees its own offers
+    // regardless of end_date.
+    if (whereClause.status === OfferStatus.ACTIVE) {
       whereClause.end_date = { gte: new Date() };
     }
 

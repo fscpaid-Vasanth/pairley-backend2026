@@ -101,3 +101,70 @@ describe('OfferService.listOffers — pagination cap', () => {
     expect(prisma.offer.findMany.mock.calls[0][0].take).toBe(100);
   });
 });
+
+// Production-safety review, this session: the homepage's "N offers live
+// right now" count and DealsPage both call GET /offers/list?status=ACTIVE
+// explicitly. Only the no-status default branch applied the end_date
+// safety net alongside the hourly OfferExpiryScheduler sweep, so an
+// explicit status=ACTIVE call could surface an offer up to ~1h past its
+// end_date, still DB-status ACTIVE but no longer something a customer
+// should be able to discover or act on. getCategoryCounts() already
+// paired status+end_date correctly — this brings listOffers in line with
+// that same, already-established convention.
+describe('OfferService.listOffers — expired-but-not-yet-swept offers never appear', () => {
+  const makePrisma = () => ({
+    offer: { findMany: jest.fn().mockResolvedValue([]) },
+  });
+
+  const makeService = (prisma: ReturnType<typeof makePrisma>) =>
+    new OfferService(
+      prisma as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      { get: jest.fn() } as any,
+      {} as any,
+      {} as any,
+    );
+
+  it('applies the end_date filter on the default (no status) call', async () => {
+    const prisma = makePrisma();
+    const service = makeService(prisma);
+
+    await service.listOffers({});
+
+    const where = prisma.offer.findMany.mock.calls[0][0].where;
+    expect(where.status).toBe('ACTIVE');
+    expect(where.end_date.gte).toBeInstanceOf(Date);
+  });
+
+  it('applies the end_date filter when status=ACTIVE is passed explicitly (the actual gap found)', async () => {
+    const prisma = makePrisma();
+    const service = makeService(prisma);
+
+    await service.listOffers({ status: 'ACTIVE' });
+
+    const where = prisma.offer.findMany.mock.calls[0][0].where;
+    expect(where.status).toBe('ACTIVE');
+    expect(where.end_date.gte).toBeInstanceOf(Date);
+  });
+
+  it('does NOT apply the end_date filter for status=ALL — admin tooling must still see everything', async () => {
+    const prisma = makePrisma();
+    const service = makeService(prisma);
+
+    await service.listOffers({ status: 'ALL' });
+
+    expect(prisma.offer.findMany.mock.calls[0][0].where.end_date).toBeUndefined();
+  });
+
+  it('does NOT apply the end_date filter for other explicit statuses — merchant/admin must see their own PENDING/PAUSED offers regardless of end_date', async () => {
+    const prisma = makePrisma();
+    const service = makeService(prisma);
+
+    await service.listOffers({ status: 'PAUSED' });
+
+    expect(prisma.offer.findMany.mock.calls[0][0].where.end_date).toBeUndefined();
+  });
+});
