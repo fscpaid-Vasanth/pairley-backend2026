@@ -59,6 +59,11 @@ export class NotificationService {
     title: string,
     message: string,
     notificationType: string,
+    // Optional deep-link target (e.g. an offer_id) — additive/trailing so
+    // every existing call site is unaffected. Added for the Anonymous
+    // Group Chat's "someone joined" notification, but generic to any
+    // future notification type that needs one.
+    relatedId?: string,
   ): Promise<boolean> {
     try {
       // 1. Create DB entry for the user — this is the durable record of
@@ -70,6 +75,7 @@ export class NotificationService {
           title,
           message,
           notification_type: notificationType,
+          related_id: relatedId ?? null,
         },
       });
     } catch (error) {

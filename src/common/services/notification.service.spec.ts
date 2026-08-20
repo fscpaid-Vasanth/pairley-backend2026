@@ -87,9 +87,28 @@ describe('NotificationService', () => {
           title: 'Title',
           message: 'Body',
           notification_type: 'NEW_LEAD',
+          related_id: null, // no relatedId passed — defaults to null
         },
       });
       expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('persists an optional relatedId for deep-linking (e.g. Anonymous Group Chat notifications)', async () => {
+      const service = new NotificationService(
+        makeConfig({ USE_MOCK_NOTIFICATIONS: true }),
+        prisma as any,
+      );
+      await service.sendNotification(
+        'user-1',
+        'Someone joined your group chat',
+        'A new member just joined.',
+        'GROUP_MEMBER_JOINED',
+        'offer-42',
+      );
+
+      expect(notificationCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({ related_id: 'offer-42' }),
+      });
     });
 
     it('returns false and never calls fetch when the DB write itself fails', async () => {

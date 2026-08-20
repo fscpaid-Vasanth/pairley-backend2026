@@ -15,6 +15,7 @@ import { CustomerModule } from './customer/customer.module';
 import { BusinessModule } from './business/business.module';
 import { OfferModule } from './offer/offer.module';
 import { LeadModule } from './lead/lead.module';
+import { GroupChatModule } from './group-chat/group-chat.module';
 import { SubscriptionModule } from './subscription/subscription.module';
 import { PaymentModule } from './payment/payment.module';
 import { NotificationModule } from './notification/notification.module';
@@ -46,6 +47,7 @@ import { AiOffersFromOnlineModule } from './ai-offers-from-online/ai-offers-from
     BusinessModule,
     OfferModule,
     LeadModule,
+    GroupChatModule,
     SubscriptionModule,
     PaymentModule,
     NotificationModule,

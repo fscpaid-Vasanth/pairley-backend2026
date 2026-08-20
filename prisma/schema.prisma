@@ -498,6 +498,9 @@ model Notification {
   title             String
   message           String
   notification_type String // New Offer, Partner Joined, Offer Completed, Subscription Expiry, etc.
+  // Anonymous Group Chat — optional deep-link target (e.g. an offer_id),
+  // additive/nullable so every existing row and read path is unaffected.
+  related_id        String?
   is_read           Boolean  @default(false)
   created_at        DateTime @default(now())
 
@@ -569,6 +572,135 @@ model CoBuyMessage {
   created_at       DateTime @default(now())
 
   @@map("co_buy_messages")
+}
+
+// ============================================================
+// Anonymous Customer-to-Customer Offer Group Chat
+// One offer = one anonymous group of every customer who has shown
+// interest (a Lead row) in that offer. The merchant is never a
+// participant — see GroupChatService's three-layer exclusion (role
+// guard, customer_id-only data shape, and getBusinessGroupSummary()
+// never selecting a text column at all). Deliberately separate from
+// CoBuyMessage (a different, narrower, legacy 2-person BOGO-pair
+// coordination tool scoped to OfferInterest, not every offer type) and
+// from LeadMessage (an anonymous 1:1 CUSTOMER<->MERCHANT thread — the
+// opposite participant model from this feature).
+// ============================================================
+
+// Lazily created the first time a customer actually opens the group
+// chat (not at Show Interest / Lead-creation time) — gated on an
+// existing Lead for the same offer_id/customer_id by
+// GroupChatService.assertEligible(). The one place the stable anonymous
+// identity lives; Lead itself is never modified by this feature.
+model OfferGroupMember {
+  id            String   @id @default(uuid())
+  offer_id      String
+  customer_id   String
+  // Stable, backend-issued, sequential per offer — assigned once at
+  // creation (see OfferGroupCounter) and never recomputed. The display
+  // string ("Pairley Member 101") is derived from this at read time,
+  // never stored twice, and never derived from customer_id/UID.
+  member_number Int
+  joined_at     DateTime @default(now())
+
+  @@unique([offer_id, customer_id])
+  @@unique([offer_id, member_number])
+  @@index([offer_id, joined_at])
+  @@map("offer_group_members")
+}
+
+// Backs an atomic per-offer sequence for member_number, via an upsert
+// inside the same transaction that creates the OfferGroupMember row —
+// Postgres row-level locking on the UPDATE serializes concurrent joins
+// for the same offer without a separate advisory lock.
+model OfferGroupCounter {
+  offer_id String @id
+  seq      Int    @default(100)
+
+  @@map("offer_group_counters")
+}
+
+// Free-text messages for the anonymous group. No @relation fields — same
+// durability precedent as Lead/CoBuyMessage/WhatsAppMessage, so a chat's
+// history survives independent of the membership row's lifecycle.
+// member_number is denormalized at write time so the feed never needs a
+// join to render a sender label.
+model OfferGroupMessage {
+  id            String   @id @default(uuid())
+  offer_id      String
+  member_id     String
+  member_number Int
+  // Default 'TEXT' makes every pre-existing row explicitly typed with zero
+  // data loss or reinterpretation — mirrors LeadMessage.message_type's
+  // @default('STATEMENT') precedent. See groupChatMessageTypes.ts for the
+  // validate/render catalog that produces DATE_TIME/LOCATION/POLL rows.
+  type          String   @default("TEXT") // 'TEXT' | 'DATE_TIME' | 'LOCATION' | 'POLL'
+  // Always the final, pre-rendered display string regardless of type — so
+  // the feed and the frontend's defensive fallback branch never need
+  // type-specific logic just to show *something*.
+  text          String
+  // Structured data for non-TEXT types (date/time, lat/lng/label, poll
+  // question+options). Null for TEXT — never required, same as
+  // LeadMessage.payload.
+  payload       Json?
+  // "Pairley Member 101 joined the chat" — mirrors CoBuyMessage.is_system.
+  // Not a human participant; no fake Pairley user account is created.
+  is_system     Boolean  @default(false)
+  created_at    DateTime @default(now())
+
+  @@index([offer_id, created_at])
+  @@map("offer_group_messages")
+}
+
+// One row per (poll message, voting member). A JSON payload alone can't
+// enforce one-vote-per-member — this gives a real unique constraint plus
+// a fast groupBy for live tallies (see GroupChatService.getMessages()).
+// No @relation fields, matching every other OfferGroup* model's no-FK
+// convention in this file — durability independent of parent row
+// lifecycle. Upsertable: a member can change their vote; option_index
+// just updates.
+model OfferGroupPollVote {
+  id           String   @id @default(uuid())
+  message_id   String // the OfferGroupMessage row where type = 'POLL'
+  member_id    String // OfferGroupMember.id of the voter
+  option_index Int // index into payload.options[] on the poll message
+
+  created_at DateTime @default(now())
+
+  @@unique([message_id, member_id])
+  @@index([message_id, option_index])
+  @@map("offer_group_poll_votes")
+}
+
+// Minimal V1 report primitive — captured for future admin review only, no
+// admin UI/workflow built in V1. message_id null = a general member
+// report (not tied to one specific message).
+model OfferGroupReport {
+  id                 String   @id @default(uuid())
+  offer_id           String
+  reporter_member_id String
+  target_member_id   String
+  message_id         String?
+  reason             String?
+  created_at         DateTime @default(now())
+
+  @@index([offer_id, target_member_id])
+  @@map("offer_group_reports")
+}
+
+// Per-viewer mute, not a platform ban — a blocked member's messages are
+// excluded server-side from the blocker's own feed only (see
+// GroupChatService.getMessages()). Deliberately not a full moderation
+// platform for V1.
+model OfferGroupBlock {
+  id                String   @id @default(uuid())
+  offer_id          String
+  blocker_member_id String
+  blocked_member_id String
+  created_at        DateTime @default(now())
+
+  @@unique([offer_id, blocker_member_id, blocked_member_id])
+  @@map("offer_group_blocks")
 }
 
 model Lead {
